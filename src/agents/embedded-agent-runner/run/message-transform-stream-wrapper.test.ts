@@ -197,9 +197,7 @@ describe("direct provider context handoff", () => {
       }
       expect(JSON.stringify(resolved)).not.toContain(stateDir);
       expect(JSON.stringify(context)).toBe(originalJson);
-      await expect(providerOptions?.[PROVIDER_CONTEXT_HANDOFF]?.()).rejects.toThrow(
-        "already consumed",
-      );
+      await expect(providerOptions?.[PROVIDER_CONTEXT_HANDOFF]?.()).resolves.toBe(resolved);
     } finally {
       env.restore();
     }
