@@ -54,7 +54,13 @@ export function runGatewayStateOwnerHeartbeat(
   };
   const beat = () => {
     const remaining = remainingMs();
-    if (remaining <= 0) {
+    // An OS suspension freezes this thread too, so a wall-clock gap alone cannot
+    // mean another owner took custody: same-namespace staleness is pid/starttime
+    // based, and foreign-namespace observers are frozen during the sleep as well.
+    // Re-baseline from one fresh verified stamp instead of forfeiting; a clock
+    // that moved backwards still stops below.
+    const recovering = remaining <= 0 && now() - Atomics.load(lastBeat, 0) >= 0n;
+    if (remaining <= 0 && !recovering) {
       stop();
       return;
     }
@@ -88,8 +94,10 @@ export function runGatewayStateOwnerHeartbeat(
         const renewalStartedAt = now();
         // A recovered clock cannot make an older captured timestamp safe to write.
         if (remainingMs(renewalStartedAt) <= 0 || remainingMs() <= 0) {
-          stop();
-          return;
+          if (!recovering || renewalStartedAt - Atomics.load(lastBeat, 0) < 0n) {
+            stop();
+            return;
+          }
         }
         // A suspension after verification can only touch this held inode, never its successor.
         const stamp = new Date(Number(renewalStartedAt));
@@ -110,22 +118,28 @@ export function runGatewayStateOwnerHeartbeat(
         failure ??= `${lockPath}: utimes renewal failed: ${coerceErrorMessage(error)}`;
       }
     }
-    if (remainingMs() <= 0) {
-      stop();
-      return;
-    }
     data.events.postMessage(failure, []);
     if (!failure && renewedAt !== undefined) {
       // A slow syscall must not publish authority newer than the mtime supplied to it.
       Atomics.store(lastBeat, 0, renewedAt);
+      Atomics.notify(lastBeat, 0);
     }
-    backoff = failure ? Math.min(backoff ? backoff * 2 : 1_000, data.intervalMs, remaining) : 0;
+    if (remainingMs() <= 0) {
+      stop();
+      return;
+    }
+    backoff = failure ? Math.min(backoff ? backoff * 2 : 1_000, data.intervalMs, remainingMs()) : 0;
     timer = setTimeout(beat, backoff || data.intervalMs);
     timer.unref();
   };
-  parent?.on("message", (message: "stop" | [string, string]) => {
+  parent?.on("message", (message: "stop" | "beat" | [string, string]) => {
     if (message === "stop") {
       stop();
+    } else if (message === "beat") {
+      // The parent observed an overdue deadline (OS suspension); renew now
+      // instead of waiting for the next interval tick.
+      clearTimeout(timer);
+      beat();
     } else {
       // Raw bytes include fs-safe's acquisition token; new projection custody may reuse a path.
       if (data.locks[message[0]] !== message[1]) {
