@@ -139,4 +139,57 @@ describe("runCapability video", () => {
     });
     expect(videoResult.outputs).toHaveLength(0);
   });
+
+  it("hands video from config when the prepared catalog read fails", async () => {
+    let result: Awaited<ReturnType<typeof runCapability>> | undefined;
+    await loadModelCatalog.withImplementation(
+      async () => {
+        throw new Error("sqlite lock timeout");
+      },
+      async () => {
+        await withVideoFixture(
+          "openclaw-video-native-config-fallback",
+          async ({ ctx, media, cache }) => {
+            result = await runCapability({
+              capability: "video",
+              cfg: {
+                models: {
+                  providers: {
+                    "llm-local": {
+                      baseUrl: "http://127.0.0.1:5468/v1",
+                      api: "openai-completions",
+                      apiKey: "not-needed",
+                      models: [
+                        {
+                          id: "qwen3.8-flash-next-iq3_s",
+                          name: "qwen3.8-flash-next-iq3_s",
+                          api: "openai-completions",
+                          reasoning: true,
+                          input: ["text", "image", "video"],
+                          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                          maxTokens: 1024,
+                        },
+                      ],
+                    },
+                  },
+                },
+                tools: { media: { video: { enabled: true } } },
+              },
+              ctx,
+              attachments: cache,
+              media,
+              providerRegistry: new Map(),
+              activeModel: { provider: "llm-local", model: "qwen3.8-flash-next-iq3_s" },
+            });
+          },
+        );
+      },
+    );
+    const videoResult = expectDefined(result, "video result");
+    expect(videoResult.decision.outcome).toBe("skipped");
+    expect(videoResult.decision.attachmentDispositions).toEqual({
+      0: { kind: "handed-to-native-vision" },
+    });
+    expect(videoResult.outputs).toHaveLength(0);
+  });
 });
