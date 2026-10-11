@@ -5,6 +5,7 @@ import {
   type ProviderStreamOptions,
 } from "../../../../packages/ai/src/provider-types.js";
 import type { AgentMessage } from "../../runtime/index.js";
+import { log } from "../logger.js";
 
 type MessageTransform = (
   messages: AgentMessage[],
@@ -38,6 +39,8 @@ export function wrapStreamFnWithMessageTransform(
     let availableContext: Parameters<StreamFn>[1] | undefined = nextContext;
     let handoffPromise: Promise<ProviderContext> | undefined;
     const handoff = async (): Promise<ProviderContext> => {
+      // TEMP(video-debug 2026-10-11): proves the transport actually consumed the handoff.
+      log.warn(`provider-context handoff consumed: model=${model?.id ?? "unknown"}`);
       if (!handoffPromise) {
         const captured = availableContext;
         availableContext = undefined;
@@ -52,6 +55,8 @@ export function wrapStreamFnWithMessageTransform(
       }
       return await handoffPromise;
     };
+    // TEMP(video-debug 2026-10-11): proves the wrap installed the handoff on this request.
+    log.warn(`provider-context handoff installed: model=${model?.id ?? "unknown"}`);
     return streamFn(model, nextContext, {
       ...options,
       [PROVIDER_CONTEXT_HANDOFF]: handoff,
