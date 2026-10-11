@@ -400,6 +400,31 @@ async function activeModelSupportsNativeVision(
   return modelSupportsVision(entry);
 }
 
+// Mirrors the openai-completions transport contract that actually forwards a
+// video block (packages/ai/src/provider-transcript-transform.ts): only that api
+// carries video for a model declaring video input. Native-video providers that
+// own their own transport (google/qwen/moonshot) register describeVideo and are
+// resolved through the normal path, so gating on this exact api keeps the skip
+// from claiming a handoff the transport would omit.
+async function activeModelSupportsNativeVideo(
+  params: Omit<AutoModelSelectionParams, "capability" | "providerRegistry">,
+): Promise<boolean> {
+  const activeProvider = params.activeModel?.provider?.trim();
+  if (!activeProvider) {
+    return false;
+  }
+  const { findModelInCatalog, readPreparedModelCatalog, modelSupportsInput } =
+    await loadPreparedModelCatalogApi();
+  const catalog = await readPreparedModelCatalog({
+    config: params.cfg,
+    ...(params.agentId ? { agentId: params.agentId } : {}),
+    ...(params.agentDir ? { agentDir: params.agentDir } : {}),
+    ...(params.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
+  });
+  const entry = findModelInCatalog(catalog, activeProvider, params.activeModel?.model ?? "");
+  return entry?.api === "openai-completions" && modelSupportsInput(entry, "video");
+}
+
 async function* resolveAutoAudioEntries(
   params: AutoModelSelectionParams,
 ): AsyncGenerator<ResolvedMediaModelEntry> {
@@ -698,6 +723,16 @@ export async function runCapability(params: {
     });
     return nativeVisionProbe;
   };
+  let nativeVideoProbe: Promise<boolean | undefined> | undefined;
+  const resolveNativeVideoFlag = (): Promise<boolean | undefined> => {
+    nativeVideoProbe ??= activeModelSupportsNativeVideo(params).catch((err: unknown) => {
+      if (shouldLogVerbose()) {
+        logVerbose(`native video support check failed: ${String(err)}`);
+      }
+      return undefined;
+    });
+    return nativeVideoProbe;
+  };
   const buildDispositions = (
     selectedDisposition: MediaAttachmentDisposition,
     droppedDisposition = selectedDisposition,
@@ -836,6 +871,50 @@ export async function runCapability(params: {
     });
   }
   if (!automaticAudio && resolvedEntries.length === 0) {
+    // No describeVideo provider resolved. When the reply model accepts video
+    // natively, the clip is injected into the model context directly, so a
+    // "no video-understanding model" marker would falsely claim non-delivery
+    // (mirrors the image native-vision handoff). Only reached when the resolver
+    // found nothing, so bundled native-video providers keep their describe pass.
+    if (capability === "video" && activeProvider && (await resolveNativeVideoFlag()) === true) {
+      if (shouldLogVerbose()) {
+        logVerbose("Skipping video understanding: primary model supports video natively");
+      }
+      const attempt = {
+        type: "provider" as const,
+        provider: activeProvider,
+        model: params.activeModel?.model?.trim() || undefined,
+        outcome: "skipped" as const,
+        reason: "primary model supports video natively",
+      };
+      const nativeDeliverable = (item: MediaAttachment) =>
+        Boolean(item.path) ||
+        (Boolean(item.url) && classifyMediaReferenceSource(item.url ?? "").isMediaStoreUrl);
+      const attachmentDispositions = buildDispositions(
+        { kind: "handed-to-native-vision" },
+        { kind: "not-selected" },
+      );
+      for (const item of params.media) {
+        if (attachmentDispositions[item.index] && !nativeDeliverable(item)) {
+          attachmentDispositions[item.index] = {
+            kind: "failed",
+            reason: "remote-url video is not natively deliverable",
+          };
+        }
+      }
+      return {
+        outputs: [],
+        decision: await buildDecision(
+          "skipped",
+          selection.selected.map((item) =>
+            nativeDeliverable(item)
+              ? { attachmentIndex: item.index, attempts: [attempt], chosen: attempt }
+              : { attachmentIndex: item.index, attempts: [] },
+          ),
+          attachmentDispositions,
+        ),
+      };
+    }
     return {
       outputs: [],
       decision: await buildDecision(

@@ -28,6 +28,13 @@ vi.mock("../agents/model-auth.js", async () => {
   return createAvailableModelAuthMockModule();
 });
 
+const loadModelCatalog = vi.hoisted(() => vi.fn(async () => [] as unknown[]));
+
+vi.mock("../agents/prepared-model-catalog.js", () => ({
+  loadProviderScopedThinkingCatalog: vi.fn(async () => []),
+  readPreparedModelCatalog: loadModelCatalog,
+}));
+
 function videoConfig(models?: MediaUnderstandingModelConfig[]): OpenClawConfig {
   return {
     models: {
@@ -98,5 +105,38 @@ describe("runCapability video", () => {
       model: "provider-default",
     });
     expect(seenModel).toBeUndefined();
+  });
+
+  it("hands video to a natively video-capable reply model instead of a no-model marker", async () => {
+    let result: Awaited<ReturnType<typeof runCapability>> | undefined;
+    await loadModelCatalog.withImplementation(
+      async () => [
+        {
+          provider: "llm-local",
+          id: "qwen3.8-flash-next-iq3_s",
+          api: "openai-completions",
+          input: ["text", "image", "video"],
+        },
+      ],
+      async () => {
+        await withVideoFixture("openclaw-video-native", async ({ ctx, media, cache }) => {
+          result = await runCapability({
+            capability: "video",
+            cfg: { tools: { media: { video: { enabled: true } } } },
+            ctx,
+            attachments: cache,
+            media,
+            providerRegistry: new Map(),
+            activeModel: { provider: "llm-local", model: "qwen3.8-flash-next-iq3_s" },
+          });
+        });
+      },
+    );
+    const videoResult = expectDefined(result, "video result");
+    expect(videoResult.decision.outcome).toBe("skipped");
+    expect(videoResult.decision.attachmentDispositions).toEqual({
+      0: { kind: "handed-to-native-vision" },
+    });
+    expect(videoResult.outputs).toHaveLength(0);
   });
 });
