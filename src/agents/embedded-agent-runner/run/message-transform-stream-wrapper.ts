@@ -1,9 +1,9 @@
-import type { StreamFn } from "openclaw/plugin-sdk/agent-core";
 import {
   PROVIDER_CONTEXT_HANDOFF,
   type ProviderContext,
   type ProviderStreamOptions,
-} from "../../../../packages/ai/src/provider-types.js";
+} from "@openclaw/ai/provider-types";
+import type { StreamFn } from "openclaw/plugin-sdk/agent-core";
 import type { AgentMessage } from "../../runtime/index.js";
 import { log } from "../logger.js";
 
