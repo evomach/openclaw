@@ -14,6 +14,7 @@ import {
   reasoningTagTextPolicy,
   type OpenAICompletionsOptions,
 } from "../provider-options.js";
+import { resolveProviderContext, type ProviderStreamOptions } from "../provider-types.js";
 import { resolveCacheRetention } from "../providers/cache-retention.js";
 import { buildCopilotDynamicHeaders } from "../providers/github-copilot-headers.js";
 import { finalizeOpenAICompletionsToolCalls } from "../providers/openai-completions-tool-calls.js";
@@ -312,6 +313,10 @@ export function streamOpenAICompletionsRequest(
     const provisionalCommentaryTags: PendingCommentaryTags = new Map();
     let firstEventAbort: ReturnType<typeof createFirstStreamEventAbortController> | undefined;
     try {
+      const requestContext = (await resolveProviderContext(
+        context,
+        options as ProviderStreamOptions | undefined,
+      )) as Context;
       const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
       const directEmitReasoning = Boolean(
         mode === "direct" &&
@@ -329,7 +334,7 @@ export function streamOpenAICompletionsRequest(
           ? {
               client: createDirectCompletionsClient(
                 model,
-                context,
+                requestContext,
                 apiKey,
                 resolveProviderSimpleCompletionHeaders(model, options),
                 cacheRetention === "none" ? undefined : options?.sessionId,
@@ -337,8 +342,8 @@ export function streamOpenAICompletionsRequest(
               ),
               sawStreamDONE: undefined,
             }
-          : createManagedCompletionsClient(model, context, options, apiKey, cacheRetention);
-      let params = buildOpenAICompletionsRequest(model, context, options, policy);
+          : createManagedCompletionsClient(model, requestContext, options, apiKey, cacheRetention);
+      let params = buildOpenAICompletionsRequest(model, requestContext, options, policy);
       const encodeBody = prepareModelRequestBody(options);
       const nextParams = await options?.onPayload?.(params, model);
       if (nextParams !== undefined) {
