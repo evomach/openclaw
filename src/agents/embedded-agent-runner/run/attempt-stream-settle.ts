@@ -15,6 +15,7 @@ import type { subscribeEmbeddedAgentSession } from "../../embedded-agent-subscri
 import { resolveSelectedModelCredential } from "../../model-auth-selected-credential.js";
 import { wrapStreamFnTextTransforms } from "../../plugin-text-transforms.js";
 import { registerProviderStreamForModel } from "../../provider-stream.js";
+import type { StreamFn } from "../../runtime/index.js";
 import type { SandboxContext } from "../../sandbox/types.js";
 import type { AgentSession, SessionManager, SettingsManager } from "../../sessions/index.js";
 import { withSessionManagerWrite } from "../../sessions/session-manager-write-admission.js";
@@ -444,30 +445,33 @@ export async function prepareEmbeddedAttemptTransport(input: {
     workspaceDir: input.workspaceDir,
     auth,
   });
+  const materializeAttemptProviderContext = async (provider: {
+    context: Parameters<StreamFn>[1];
+    signal?: AbortSignal;
+  }) => {
+    assertRunCurrent?.();
+    const prepared = await materializeProviderContext({
+      ...provider,
+      workspaceDir: input.workspaceDir,
+      agentWorkspaceDir: attempt.workspaceDir,
+      workspaceOnly: input.workspaceOnly,
+      localRoots: input.workspaceOnly
+        ? undefined
+        : getAgentScopedMediaLocalRoots(attempt.config ?? {}, input.sessionAgentId),
+      onCurrentTurnImageFailure: input.onCurrentTurnImageFailure,
+      sandbox:
+        input.sandbox?.enabled && input.sandbox.fsBridge
+          ? { root: input.sandbox.workspaceDir, bridge: input.sandbox.fsBridge }
+          : undefined,
+    });
+    assertRunCurrent?.();
+    return prepared;
+  };
   const directProviderStreamFn = providerStreamFn
     ? wrapStreamFnWithMessageTransform(
         providerStreamFn,
         (messages) => messages,
-        async ({ context, ...provider }) => {
-          assertRunCurrent?.();
-          const prepared = await materializeProviderContext({
-            ...provider,
-            context,
-            workspaceDir: input.workspaceDir,
-            agentWorkspaceDir: attempt.workspaceDir,
-            workspaceOnly: input.workspaceOnly,
-            localRoots: input.workspaceOnly
-              ? undefined
-              : getAgentScopedMediaLocalRoots(attempt.config ?? {}, input.sessionAgentId),
-            onCurrentTurnImageFailure: input.onCurrentTurnImageFailure,
-            sandbox:
-              input.sandbox?.enabled && input.sandbox.fsBridge
-                ? { root: input.sandbox.workspaceDir, bridge: input.sandbox.fsBridge }
-                : undefined,
-          });
-          assertRunCurrent?.();
-          return prepared;
-        },
+        materializeAttemptProviderContext,
       )
     : undefined;
   const transportApiKey = await resolveEmbeddedAgentApiKey({
@@ -492,7 +496,15 @@ export async function prepareEmbeddedAttemptTransport(input: {
     authStorage: attempt.authStorage,
     assertCurrent: assertRunCurrent,
   });
-  session.agent.streamFn = streamFn;
+  // Managed/boundary transports can be selected without a plugin provider
+  // stream, so the provider-context handoff must be installed for those too.
+  session.agent.streamFn = providerStreamFn
+    ? streamFn
+    : wrapStreamFnWithMessageTransform(
+        streamFn,
+        (messages) => messages,
+        materializeAttemptProviderContext,
+      );
   // Install inside provider/config wrappers so their full onPayload chain runs
   // before admission hashes the request body that the built-in transport sends.
   session.agent.streamFn = wrapStreamFnWithProviderPromptState({

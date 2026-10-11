@@ -446,6 +446,38 @@ describe("prepareEmbeddedAttemptTransport", () => {
     }
   });
 
+  it("materializes native video when no plugin provider stream is registered", async () => {
+    const workspaceDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-transport-video-"));
+    const videoPath = path.join(workspaceDir, "history.mp4");
+    await fs.writeFile(videoPath, MP4);
+    const { input, session, model, getProviderOptions } = createMediaTransportFixture(
+      "test-model-video-no-provider",
+      workspaceDir,
+      "marketing",
+    );
+    registerProviderStreamForModel.mockReturnValue(undefined);
+    input.attempt.config = { agents: { entries: { marketing: { workspace: workspaceDir } } } };
+
+    try {
+      await prepareEmbeddedAttemptTransport(input);
+      const message = attachRuntimePromptMediaFacts(
+        castAgentMessage({ role: "user", content: [{ type: "text", text: "inspect" }] }),
+        [{ kind: "video", path: videoPath, contentType: "video/mp4" }],
+      );
+      const context = { systemPrompt: "system", messages: [message], tools: [] };
+
+      await session.agent.streamFn(model as never, context as never, {});
+      const provider = await resolveProviderContext(context as never, getProviderOptions());
+
+      expect(provider.messages[0]?.content).toEqual([
+        { type: "text", text: "inspect" },
+        { type: "video", data: MP4.toString("base64"), mimeType: "video/mp4" },
+      ]);
+    } finally {
+      await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
   it("records image hydration failures at the provider handoff", async () => {
     const { input, session, model, getProviderOptions } =
       createMediaTransportFixture("test-model-image");
