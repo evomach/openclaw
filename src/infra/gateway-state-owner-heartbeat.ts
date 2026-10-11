@@ -78,6 +78,54 @@ export function startGatewayStateOwnerHeartbeat(
           failure = message.message;
         }
       }
+      if (age >= 60_000 && failure === null && !workerExited) {
+        // The bounded worker round-trip can lose to a waking volume's first I/O after
+        // OS suspension. Renew once synchronously with the same inode/content custody
+        // proof the worker's beat performs: a completed verified touch honestly
+        // re-stamps mtime, while a replaced or unreadable lock fences with its reason.
+        // Admission already verifies these locks synchronously, so this adds no new
+        // main-thread fs exposure; a dead worker never resumes custody (workerExited).
+        let oldestRenewal = 0n;
+        let renewedAny = false;
+        for (const [lockPath, raw] of Object.entries(locks)) {
+          try {
+            const fd = fs.openSync(lockPath, "r+");
+            try {
+              const held = fs.fstatSync(fd, { bigint: true });
+              const current = fs.statSync(lockPath, { bigint: true });
+              const bytes = Buffer.alloc(Buffer.byteLength(raw) + 1);
+              const length = fs.readSync(fd, bytes, 0, bytes.length, 0);
+              if (
+                held.nlink === 0n ||
+                held.dev !== current.dev ||
+                held.ino !== current.ino ||
+                bytes.subarray(0, length).toString("utf8") !== raw
+              ) {
+                failure = `${lockPath}: owner lock was removed or replaced`;
+                break;
+              }
+              const renewalStartedAt = BigInt(now());
+              const stamp = new Date(Number(renewalStartedAt));
+              fs.futimesSync(fd, stamp, stamp);
+              if (!renewedAny || renewalStartedAt < oldestRenewal) {
+                oldestRenewal = renewalStartedAt;
+              }
+              renewedAny = true;
+            } finally {
+              fs.closeSync(fd);
+            }
+          } catch (error) {
+            failure = `${lockPath}: utimes renewal failed: ${coerceErrorMessage(error)}`;
+            break;
+          }
+        }
+        if (!failure && renewedAny) {
+          Atomics.store(lastBeat, 0, oldestRenewal);
+          Atomics.notify(lastBeat, 0);
+          renewedAt = oldestRenewal;
+          age = now() - Number(renewedAt);
+        }
+      }
       const remaining = age < 0 ? 0 : 60_000 - age;
       if (remaining <= 0) {
         onLost(

@@ -391,6 +391,70 @@ it("recovers overdue custody through a bounded beat when the worker is live", as
   }
 });
 
+it("re-baselines synchronously when a live worker misses the bounded resume window", async () => {
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  const { workers, ready, beats } = observeHeartbeatWorkers(pause.buffer);
+  const root = tempDirs.make("openclaw-owner-heartbeat-wake-io-");
+  const gateway = await acquireGatewayLock({
+    allowInTests: true,
+    env: { OPENCLAW_STATE_DIR: root },
+    timeoutMs: 0,
+  });
+  if (!gateway) {
+    throw new Error("Expected Gateway custody");
+  }
+  try {
+    // The worker stalls inside its first timestamp syscall, so the bounded
+    // beat round-trip expires while the lock stays intact (a waking volume).
+    expect(await Promise.all(ready)).toEqual([["paused"]]);
+    const lastBeat = beats[0];
+    if (!lastBeat) {
+      throw new Error("Expected one heartbeat worker and its shared observation");
+    }
+    const stamp = fs.statSync(gateway.lockPath).mtimeMs;
+    Atomics.store(lastBeat, 0, BigInt(Date.now() - 60_001));
+    expect(() => gateway.assertCurrent()).not.toThrow();
+    expect(Number(Atomics.load(lastBeat, 0))).toBeGreaterThan(Date.now() - 60_000);
+    expect(fs.statSync(gateway.lockPath).mtimeMs).toBeGreaterThan(stamp);
+    expect(() => gateway.assertCurrent()).not.toThrow();
+  } finally {
+    Atomics.store(pause, 0, 1);
+    Atomics.notify(pause, 0);
+    await gateway.release();
+    await Promise.all(workers.map((worker) => worker.terminate()));
+  }
+});
+
+it("fences when the worker misses the window and the lock was replaced", async () => {
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  const { workers, ready, beats } = observeHeartbeatWorkers(pause.buffer);
+  const root = tempDirs.make("openclaw-owner-heartbeat-wake-successor-");
+  const gateway = await acquireGatewayLock({
+    allowInTests: true,
+    env: { OPENCLAW_STATE_DIR: root },
+    timeoutMs: 0,
+  });
+  if (!gateway) {
+    throw new Error("Expected Gateway custody");
+  }
+  try {
+    expect(await Promise.all(ready)).toEqual([["paused"]]);
+    const lastBeat = beats[0];
+    if (!lastBeat) {
+      throw new Error("Expected one heartbeat worker and its shared observation");
+    }
+    Atomics.store(lastBeat, 0, BigInt(Date.now() - 60_001));
+    fs.renameSync(gateway.lockPath, `${gateway.lockPath}.retired`);
+    fs.writeFileSync(gateway.lockPath, "successor");
+    expect(() => gateway.assertCurrent()).toThrow("owner lock was removed or replaced");
+  } finally {
+    Atomics.store(pause, 0, 1);
+    Atomics.notify(pause, 0);
+    await gateway.release();
+    await Promise.all(workers.map((worker) => worker.terminate()));
+  }
+});
+
 it("renews retained custody during synchronous work and never touches a successor", async () => {
   const { workers, ready } = observeHeartbeatWorkers();
   const root = tempDirs.make("openclaw-owner-worker-");
