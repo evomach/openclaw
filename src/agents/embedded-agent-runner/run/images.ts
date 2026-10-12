@@ -557,10 +557,10 @@ async function materializePromptMediaMessages(
     } else if (
       options.provider &&
       !resolvedMediaOrEmpty.length &&
-      Array.isArray((message as Record<string, unknown>).media)
+      Array.isArray(asNonArrayRecord(message).media)
     ) {
       log.warn(
-        `unprojected user media facts: message=${index}/${messages.length} topLevelMedia=${(message as { media: unknown[] }).media.length}`,
+        `unprojected user media facts: message=${index}/${messages.length} topLevelMedia=${(asNonArrayRecord(message).media as unknown[]).length}`,
       );
     }
     const runtimeImageOrder = readRuntimePromptImageOrder(message);
