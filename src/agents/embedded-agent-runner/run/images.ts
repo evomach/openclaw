@@ -18,7 +18,6 @@ import {
   readRuntimePromptImageOrder,
   readRuntimePromptMediaFacts,
   readPersistedMediaFacts,
-  readRuntimePromptTurnTag,
   type MediaFact,
 } from "../../../media/media-facts.js";
 import { resolveMediaReferenceLocalPath } from "../../../media/media-reference.js";
@@ -44,7 +43,6 @@ import {
   type MediaFileRef,
   type MediaImageRef,
 } from "./images.media-refs.js";
-import { videoHandoffDebugEnabled } from "./message-transform-stream-wrapper.js";
 import {
   type ImageFactIndex,
   type MediaImageLayout,
@@ -583,57 +581,7 @@ async function materializePromptMediaMessages(
       if (injected?.length) {
         resolvedMedia = injected;
         resolvedMediaOrEmpty = injected;
-        if (videoHandoffDebugEnabled()) {
-          log.warn(
-            `current-turn fact injection: message=${index}/${messages.length} facts=${injected.length}`,
-          );
-        }
       }
-    }
-    if (videoHandoffDebugEnabled() && options.provider) {
-      const userIndexes: number[] = [];
-      for (let i = messages.length - 1; i >= 0 && userIndexes.length < 4; i -= 1) {
-        if (messages[i]?.role === "user") {
-          userIndexes.unshift(i);
-        }
-      }
-      if (index === userIndexes[0]) {
-        log.warn(
-          `media census: provider=true total=${messages.length} userRole=${messages.filter((m) => m.role === "user").length} recentUsers=${JSON.stringify(userIndexes)}`,
-        );
-        for (const userIndex of userIndexes) {
-          if (userIndex === index) {
-            continue;
-          }
-          const probeMessage = messages[userIndex] as object;
-          const probeRec = asNonArrayRecord(messages[userIndex]);
-          const probeMeta = (
-            Reflect.get(probeMessage, "__openclaw") as { media?: unknown[] } | undefined
-          )?.media;
-          const probeText =
-            typeof probeRec.content === "string"
-              ? probeRec.content
-              : Array.isArray(probeRec.content)
-                ? probeRec.content.map((block) => asNonArrayRecord(block).text ?? "").join(" ")
-                : "";
-          log.warn(
-            `media census row: message=${userIndex} tag=${readRuntimePromptTurnTag(probeMessage) ?? "none"} runtime=${readRuntimePromptMediaFacts(probeMessage)?.length ?? "none"} metaMedia=${Array.isArray(probeMeta) ? probeMeta.length : "none"} topMedia=${Array.isArray(probeRec.media) ? (probeRec.media as unknown[]).length : "none"} marker=${probeText.includes("video omitted")} text=${JSON.stringify(probeText.slice(0, 60))}`,
-          );
-        }
-      }
-    }
-    if (videoHandoffDebugEnabled() && index === activeUserIndex) {
-      const probeMeta = (meta as { media?: unknown[] } | undefined)?.media;
-      const probeRec = asNonArrayRecord(message);
-      const probeContent =
-        typeof message.content === "string"
-          ? message.content
-          : Array.isArray(message.content)
-            ? message.content.map((block) => asNonArrayRecord(block).text ?? "").join(" ")
-            : "";
-      log.warn(
-        `media shape probe: message=${index}/${messages.length} provider=${Boolean(options.provider)} activeUser=true tag=${readRuntimePromptTurnTag(message as object) ?? "none"} runtime=${runtimeMedia ? runtimeMedia.length : "none"} metaMedia=${Array.isArray(probeMeta) ? probeMeta.length : "none"} topMedia=${Array.isArray(probeRec.media) ? (probeRec.media as unknown[]).length : "none"} resolved=${resolvedMediaOrEmpty.length} marker=${probeContent.includes("video omitted")}`,
-      );
     }
     if (options.provider && resolvedMediaOrEmpty.some((fact) => isVideoMediaFact(fact))) {
       const metaMedia = (meta as { media?: unknown[] } | undefined)?.media;
