@@ -534,6 +534,12 @@ async function materializePromptMediaMessages(
     const runtimeMedia = readRuntimePromptMediaFacts(message);
     const meta = Reflect.get(message, "__openclaw");
     const resolvedMedia = runtimeMedia ?? readPersistedMediaFacts(message) ?? [];
+    if (options.provider && resolvedMedia.some((fact) => isVideoMediaFact(fact))) {
+      const metaMedia = (meta as { media?: unknown[] } | undefined)?.media;
+      log.warn(
+        `provider media facts: message=${index}/${messages.length} activeUser=${index === activeUserIndex} runtimeFacts=${runtimeMedia ? runtimeMedia.length : "none"} metaMedia=${Array.isArray(metaMedia) ? metaMedia.length : "none"} resolved=${resolvedMedia.length}`,
+      );
+    }
     const runtimeImageOrder = readRuntimePromptImageOrder(message);
     const mediaImageLayout = readPersistedMediaImageLayout(message);
     if (!resolvedMedia.length) {
