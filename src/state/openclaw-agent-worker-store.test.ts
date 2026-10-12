@@ -311,9 +311,7 @@ it.each([false, true])(
       expect(prepare).not.toHaveBeenCalled();
       // Retirement may change lock policy, but must not run host-thread data SQL.
       expect(exec.mock.calls).toEqual([["PRAGMA busy_timeout = 0"]]);
-      expect(readOpenClawAgentIntegrityVerification(options.path)?.clean_close).toBe(
-        pinned ? 0 : 1,
-      );
+      expect(readSqliteDatabaseCleanClose(options.path)).toBe(!pinned);
       resetGatewayWorkAdmission();
       const reopened = openOpenClawAgentDatabase(options);
       expect(reopened.db.prepare("SELECT value FROM worker_proof ORDER BY rowid").all()).toEqual([
