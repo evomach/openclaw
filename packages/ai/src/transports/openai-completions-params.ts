@@ -96,6 +96,12 @@ function resolveOpenAICompletionsModelMaxTokens(model: OpenAIModeModel): number 
 
 const OPENAI_COMPLETIONS_INPUT_TOKEN_SAFETY_MARGIN = 1.25;
 const OPENAI_COMPLETIONS_IMAGE_CHAR_ESTIMATE = 8_000;
+// Vision servers bill video clips as projected frames (roughly 4k-25k tokens on
+// local llama.cpp-style endpoints), never as the base64 characters of the
+// data URI. Counting raw data-URI characters inflates any clip above a few
+// hundred kilobytes to hundreds of thousands of estimated tokens and trips the
+// proxy-like preflight guard before the request is even sent.
+const OPENAI_COMPLETIONS_VIDEO_CHAR_ESTIMATE = 96_000;
 const MIN_USEFUL_OUTPUT_TOKENS = 16;
 
 function estimateJsonChars(value: unknown, fallback: number): number {
@@ -163,6 +169,10 @@ function estimateOpenAICompletionsContentChars(value: unknown): number {
     const record = block as Record<string, unknown>;
     if (record.type === "image_url" || record.type === "input_image") {
       adjustedChars += OPENAI_COMPLETIONS_IMAGE_CHAR_ESTIMATE;
+      continue;
+    }
+    if (record.type === "video_url" || record.type === "input_video") {
+      adjustedChars += OPENAI_COMPLETIONS_VIDEO_CHAR_ESTIMATE;
       continue;
     }
     const text = record.text;

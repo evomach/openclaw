@@ -74,6 +74,34 @@ describe("OpenAI completions output budgets", () => {
     }
   });
 
+  it("charges video parts as projected frames, not as data-URI text", () => {
+    const proxyVideo = {
+      ...proxy,
+      input: ["text", "image", "video"] as ("text" | "image" | "video")[],
+    };
+    const context: Context = {
+      systemPrompt: "system",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "What is in this video?" },
+            { type: "video", mimeType: "video/mp4", data: "A".repeat(1_050_000) },
+          ],
+          timestamp: 1,
+        },
+      ],
+      tools: [],
+    };
+    const params = request({ ...proxyVideo, contextTokens: 64_000 }, undefined, context);
+    const user = params.messages.find(
+      (message) => (message as { role?: string }).role === "user",
+    ) as { content?: Array<{ type?: string; video_url?: { url?: string } }> };
+    const videoPart = user?.content?.find((part) => part.type === "video_url");
+    expect(videoPart?.video_url?.url.startsWith("data:video/mp4;base64,")).toBe(true);
+    expect(params.max_completion_tokens).toBeGreaterThan(0);
+  });
+
   it("resolves runtime, model, and context caps without changing the output field", () => {
     const uncapped = makeCompletionsModel({
       id: "mimo-v2.5-pro",
