@@ -610,10 +610,11 @@ export class ModelRegistry {
           continue;
         }
 
-        // Project richer persisted metadata to runtime's text/image contract.
+        // Project richer persisted metadata to the runtime input contract.
         // Unsupported-only rows are not runnable; explicit empty input stays valid.
         const runtimeInput = (modelDef.input ?? ["text"]).filter(
-          (input): input is "text" | "image" => input === "text" || input === "image",
+          (input): input is "text" | "image" | "video" =>
+            input === "text" || input === "image" || input === "video",
         );
         if ((modelDef.input?.length ?? 0) > 0 && runtimeInput.length === 0) {
           continue;
