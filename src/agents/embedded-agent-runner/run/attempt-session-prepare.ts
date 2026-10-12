@@ -639,6 +639,7 @@ export async function prepareEmbeddedAttemptSessionManager(input: {
         const media = readPersistedMediaFacts(message);
         if (media?.length) {
           attachRuntimePromptMediaFacts(runtimeMessage, media);
+          attempt.currentTurnMediaFacts = media;
         }
         userTranscriptContextRegistry.record(runtimeMessage, message);
       }
@@ -649,6 +650,7 @@ export async function prepareEmbeddedAttemptSessionManager(input: {
       const media = runtimeMessage ? readPersistedMediaFacts(message) : undefined;
       if (runtimeMessage && media?.length) {
         attachRuntimePromptMediaFacts(runtimeMessage, media);
+        attempt.currentTurnMediaFacts = media;
       }
       // Replay suppresses the append of a user that is already durable. Report it
       // like an adopted append so retries and fallbacks do not append it again;
