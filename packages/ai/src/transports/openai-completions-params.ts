@@ -248,6 +248,47 @@ type CompletionsRequest = Record<string, unknown> & {
   tools?: ReturnType<typeof convertTools>["tools"];
 };
 
+/** Debug-only: counts video blocks/parts and summarizes their outbound shape without base64. */
+export function scanVideoMessages(
+  messages: readonly unknown[],
+  partType: "video" | "video_url",
+): { count: number; lines: string[] } {
+  let count = 0;
+  const lines: string[] = [];
+  messages.forEach((message, index) => {
+    const record = message as { role?: string; content?: unknown };
+    if (record.role !== "user" || !Array.isArray(record.content)) {
+      return;
+    }
+    const types: string[] = [];
+    for (const item of record.content) {
+      const part = item as {
+        type?: string;
+        mimeType?: string;
+        data?: string;
+        video_url?: { url?: string };
+      };
+      types.push(part.type ?? "?");
+      if (part.type !== partType) {
+        continue;
+      }
+      count += 1;
+      if (partType === "video") {
+        lines.push(`#${index} mime=${part.mimeType ?? "?"} payload=${(part.data ?? "").length}B`);
+      } else {
+        const url = part.video_url?.url ?? "";
+        const comma = url.indexOf(",");
+        const meta = comma >= 0 ? url.slice(0, comma) : `ref:${url.slice(0, 64)}`;
+        lines.push(`#${index} ${meta} payload=${comma >= 0 ? url.length - comma - 1 : 0}B`);
+      }
+    }
+    if (types.includes(partType)) {
+      lines.push(`#${index} parts=${types.join(",")}`);
+    }
+  });
+  return { count, lines };
+}
+
 export function buildOpenAICompletionsRequest(
   model: OpenAIModeModel,
   context: Context,
@@ -289,6 +330,20 @@ export function buildOpenAICompletionsRequest(
     }
     if (managedCompat.requiresStringContent) {
       messages = flattenCompletionMessagesToStringContent(messages);
+    }
+  }
+  if (process.env.OPENCLAW_DEBUG_VIDEO_HANDOFF === "1") {
+    const canonicalScan = scanVideoMessages(context.messages ?? [], "video");
+    const convertedScan = scanVideoMessages(convertedMessages, "video_url");
+    const outboundScan = scanVideoMessages(messages, "video_url");
+    log.info(
+      `openai-completions video probe: canonical=${canonicalScan.count} converted=${convertedScan.count} outbound=${outboundScan.count} strictKeys=${managedCompat?.strictMessageKeys === true} stringContent=${managedCompat?.requiresStringContent === true}`,
+    );
+    for (const line of canonicalScan.lines) {
+      log.info(`openai-completions video probe canonical: ${line}`);
+    }
+    for (const line of outboundScan.lines) {
+      log.info(`openai-completions video probe outbound: ${line}`);
     }
   }
   const promptCacheKey = resolvePromptCacheKey(options, cacheRetention);

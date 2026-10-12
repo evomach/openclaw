@@ -41,7 +41,7 @@ import {
   resolveOpenAICompletionsCompat,
 } from "./openai-completions-compat.js";
 import { isAzureOpenAICompatibleHost } from "./openai-completions-host.js";
-import { buildOpenAICompletionsRequest } from "./openai-completions-params.js";
+import { buildOpenAICompletionsRequest, scanVideoMessages } from "./openai-completions-params.js";
 import {
   processCompletionsStream,
   shouldEmitOpenAICompletionsReasoning,
@@ -348,6 +348,13 @@ export function streamOpenAICompletionsRequest(
       const nextParams = await options?.onPayload?.(params, model);
       if (nextParams !== undefined) {
         params = nextParams as typeof params;
+      }
+      if (process.env.OPENCLAW_DEBUG_VIDEO_HANDOFF === "1") {
+        const finalScan = scanVideoMessages(params.messages ?? [], "video_url");
+        getAiTransportHost().logInfo(
+          "openai-transport",
+          `openai-completions video probe final: outboundVideos=${finalScan.count}`,
+        );
       }
       if (mode === "managed") {
         if (
