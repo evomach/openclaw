@@ -628,6 +628,51 @@ describe("structured prompt media replay", () => {
 });
 
 describe("native video provider materialization from persisted facts", () => {
+  it("materializes a video fact held only in non-canonical top-level media fields", async () => {
+    const stateDir = tempDirs.make("openclaw-video-unprojected-");
+    const inboundDir = path.join(stateDir, "media", "inbound");
+    await fs.mkdir(inboundDir, { recursive: true });
+    const videoBuffer = Buffer.from(
+      "0000001c6674797069736f6d0000000069736f6d0000020000006d6f6f7600000000",
+      "hex",
+    );
+    const videoPath = path.join(inboundDir, "IMG_UNPROJECTED.mp4");
+    await fs.writeFile(videoPath, videoBuffer);
+    const envSnapshot = captureEnv(["OPENCLAW_STATE_DIR"]);
+    setTestEnvValue("OPENCLAW_STATE_DIR", stateDir);
+    try {
+      // A freshly drained/queued runtime turn may carry facts only as the
+      // envelope-shaped top-level media array; transcript append has not
+      // canonicalized it into __openclaw yet.
+      const userMessage = {
+        role: "user",
+        content: [{ type: "text", text: "drained video turn" }],
+        timestamp: 1,
+        media: [
+          {
+            path: videoPath,
+            contentType: "video/mp4",
+            kind: "video",
+            fileName: "IMG_UNPROJECTED.MP4",
+            workspaceDir: stateDir,
+          },
+        ],
+      } as unknown as AgentMessage;
+      const prepared = await materializeProviderContext({
+        context: {
+          messages: [userMessage],
+        } as unknown as Parameters<typeof materializeProviderContext>[0]["context"],
+        workspaceDir: stateDir,
+      });
+      const blocks = prepared.messages.flatMap((message) =>
+        Array.isArray(message.content) ? message.content : [],
+      );
+      expect(blocks.filter((block) => block.type === "video")).toHaveLength(1);
+    } finally {
+      envSnapshot.restore();
+    }
+  });
+
   it("re-injects a video block after history hydration baked the omission marker", async () => {
     const stateDir = tempDirs.make("openclaw-video-replay-");
     const inboundDir = path.join(stateDir, "media", "inbound");
