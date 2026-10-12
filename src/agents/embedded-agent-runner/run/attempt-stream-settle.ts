@@ -464,32 +464,6 @@ export async function prepareEmbeddedAttemptTransport(input: {
           ? { root: input.sandbox.workspaceDir, bridge: input.sandbox.fsBridge }
           : undefined,
     });
-    // TEMP(video-debug 2026-10-11): distinguishes "handoff never called" from
-    // "handoff called but facts invisible"; remove after the native-video fix lands.
-    const debugVideoBlocks = prepared.messages.reduce((count, message) => {
-      const content = message.content;
-      return (
-        count +
-        (Array.isArray(content) ? content.filter((block) => block.type === "video").length : 0)
-      );
-    }, 0);
-    const debugVideoMarkers = prepared.messages.reduce((count, message) => {
-      const content = message.content;
-      return (
-        count +
-        (Array.isArray(content)
-          ? content.filter(
-              (block) =>
-                block.type === "text" &&
-                typeof block.text === "string" &&
-                block.text.includes("video omitted"),
-            ).length
-          : 0)
-      );
-    }, 0);
-    log.warn(
-      `provider-context handoff materialized: runId=${attempt.runId} messages=${prepared.messages.length} videoBlocks=${debugVideoBlocks} omissionMarkers=${debugVideoMarkers}`,
-    );
     assertRunCurrent?.();
     return prepared;
   };
