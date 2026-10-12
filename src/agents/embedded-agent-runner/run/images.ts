@@ -10,6 +10,7 @@ import type { Context, ImageContent, TextContent } from "../../../llm/types.js";
 import { redactSensitiveText } from "../../../logging/redact.js";
 import {
   attachRuntimePromptMediaFacts,
+  canonicalizePersistedUserMessageMedia,
   isImageMediaFact,
   isVideoMediaFact,
   normalizeMediaFacts,
@@ -557,10 +558,24 @@ async function materializePromptMediaMessages(
     }
     const runtimeMedia = readRuntimePromptMediaFacts(message);
     const meta = Reflect.get(message, "__openclaw");
-    const resolvedMedia = runtimeMedia ?? readPersistedMediaFacts(message) ?? [];
+    let resolvedMedia = runtimeMedia ?? readPersistedMediaFacts(message);
+    if (!resolvedMedia?.length) {
+      // Transcript append canonicalizes legacy/top-level media into __openclaw, but
+      // in-memory context copies can predate that projection (freshly drained or
+      // queued turns). Recover the same facts instead of omitting the media.
+      try {
+        const canonicalized = canonicalizePersistedUserMessageMedia(message as object);
+        resolvedMedia = canonicalized.changed
+          ? readPersistedMediaFacts(canonicalized.message)
+          : undefined;
+      } catch {
+        resolvedMedia = undefined;
+      }
+    }
+    const resolvedMediaOrEmpty = resolvedMedia ?? [];
     const runtimeImageOrder = readRuntimePromptImageOrder(message);
     const mediaImageLayout = readPersistedMediaImageLayout(message);
-    if (!resolvedMedia.length) {
+    if (!resolvedMediaOrEmpty.length) {
       continue;
     }
     const content = Array.isArray(message.content)
@@ -570,14 +585,14 @@ async function materializePromptMediaMessages(
     const result = await detectAndLoadPromptImages({
       ...options,
       prompt: "",
-      media: resolvedMedia,
+      media: resolvedMediaOrEmpty,
       existingImages,
       existingImageFactIndexes: readPersistedImageBlockFactIndexes(message),
       mediaImageLayout,
     });
     const projectedContent = await projectOrderedPromptMedia({
       content,
-      media: resolvedMedia,
+      media: resolvedMediaOrEmpty,
       images: result.images,
       imageFactIndexes: result.imageFactIndexes,
       options,
