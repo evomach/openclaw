@@ -7,6 +7,7 @@ import type { ContextEngine } from "../../../context-engine/types.js";
 import {
   attachRuntimePromptMediaFacts,
   readPersistedMediaFacts,
+  tagRuntimePromptTurn,
 } from "../../../media/media-facts.js";
 import { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
 import type { PluginMetadataSnapshot } from "../../../plugins/plugin-metadata-snapshot.types.js";
@@ -63,6 +64,7 @@ import { resolveExistingAttemptTranscriptState } from "./attempt-transcript-help
 import type { EmbeddedAttemptTranscriptLifecycle } from "./attempt-transcript-lifecycle.js";
 import { createUserTranscriptContextRegistry } from "./attempt-user-transcript-context-registry.js";
 import { installMessageToolOnlyTerminalHook } from "./message-tool-terminal.js";
+import { videoHandoffDebugEnabled } from "./message-transform-stream-wrapper.js";
 import {
   type InitialUserTurnReplayPreparation,
   prepareInitialPersistedUserTurnCohort,
@@ -631,6 +633,9 @@ export async function prepareEmbeddedAttemptSessionManager(input: {
         if (media?.length) {
           attachRuntimePromptMediaFacts(runtimeMessage, media);
         }
+        if (videoHandoffDebugEnabled()) {
+          tagRuntimePromptTurn(runtimeMessage, `persist:${attempt.runId}`);
+        }
         userTranscriptContextRegistry.record(runtimeMessage, message);
       }
       attempt.onUserMessagePersisted?.(message);
@@ -640,6 +645,9 @@ export async function prepareEmbeddedAttemptSessionManager(input: {
       const media = runtimeMessage ? readPersistedMediaFacts(message) : undefined;
       if (runtimeMessage && media?.length) {
         attachRuntimePromptMediaFacts(runtimeMessage, media);
+      }
+      if (runtimeMessage && videoHandoffDebugEnabled()) {
+        tagRuntimePromptTurn(runtimeMessage, `suppressed:${attempt.runId}`);
       }
       // Replay suppresses the append of a user that is already durable. Report it
       // like an adopted append so retries and fallbacks do not append it again;

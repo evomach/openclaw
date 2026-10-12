@@ -42,6 +42,21 @@ export type MediaFactInput = {
 };
 
 const RUNTIME_PROMPT_MEDIA_FACTS = Symbol.for("openclaw.runtimePromptMediaFacts");
+const RUNTIME_PROMPT_TURN_TAG = Symbol.for("openclaw.runtimePromptTurnTag");
+
+/** Debug-only identity token so probes can tell whether two passes share a message object. */
+export function tagRuntimePromptTurn<T extends object>(message: T, tag: string): T {
+  Object.defineProperty(message, RUNTIME_PROMPT_TURN_TAG, {
+    configurable: true,
+    value: tag,
+  });
+  return message;
+}
+
+export function readRuntimePromptTurnTag(message: object): string | undefined {
+  const tag = (message as Record<PropertyKey, unknown>)[RUNTIME_PROMPT_TURN_TAG];
+  return typeof tag === "string" ? tag : undefined;
+}
 
 /** Attaches facts to a runtime prompt message without changing serialized/model-visible bytes. */
 export function attachRuntimePromptMediaFacts<T extends object>(
