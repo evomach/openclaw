@@ -46,6 +46,11 @@ const RUNTIME_PROMPT_TURN_TAG = Symbol.for("openclaw.runtimePromptTurnTag");
 
 /** Debug-only identity token so probes can tell whether two passes share a message object. */
 export function tagRuntimePromptTurn<T extends object>(message: T, tag: string): T {
+  // Transcript hydration deep-freezes parsed message objects (transcript-json), so a
+  // runtime copy can arrive non-extensible. Debug tagging must never crash the turn.
+  if (!Object.isExtensible(message)) {
+    return message;
+  }
   Object.defineProperty(message, RUNTIME_PROMPT_TURN_TAG, {
     configurable: true,
     value: tag,
@@ -64,6 +69,11 @@ export function attachRuntimePromptMediaFacts<T extends object>(
   media: readonly MediaFact[],
   imageOrder?: readonly PromptImageOrderEntry[],
 ): T {
+  // Same frozen-hydration constraint as tagRuntimePromptTurn: a non-extensible copy
+  // cannot carry the facts, and throwing here would fail the transcript append itself.
+  if (!Object.isExtensible(message)) {
+    return message;
+  }
   const normalized = normalizeMediaFacts(media);
   if (imageOrder?.length) {
     Object.defineProperty(normalized, "imageOrder", { value: [...imageOrder] });
