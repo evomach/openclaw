@@ -7,6 +7,7 @@ import { asNonArrayRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { formatErrorMessage } from "../../../infra/errors.js";
 import type { Context, ImageContent, TextContent } from "../../../llm/types.js";
+import { RUNTIME_CONTEXT_BEGIN_MARKER, RUNTIME_CONTEXT_END_MARKER } from "../../../llm/types.js";
 import { redactSensitiveText } from "../../../logging/redact.js";
 import {
   attachRuntimePromptMediaFacts,
@@ -437,6 +438,12 @@ type PromptMediaOptions = {
   provider?: boolean;
   signal?: AbortSignal;
   onCurrentTurnImageFailure?: (count: number) => void;
+  /**
+   * Canonical facts for the active turn, supplied by the run when the provider
+   * transcript's copy of the user message was rebuilt by the session layer and
+   * lost every fact carrier (runtime symbols, __openclaw, legacy fields).
+   */
+  currentTurnFacts?: MediaFact[];
 };
 
 export function buildPromptImageFailureNotice(count: number): string {
@@ -529,7 +536,25 @@ async function materializePromptMediaMessages(
 ): Promise<AgentMessage[]> {
   let hydrated: AgentMessage[] | undefined;
   const videoBudget = { remaining: MAX_VIDEO_BYTES };
-  const activeUserIndex = messages.findLastIndex((message) => message.role === "user");
+  // Runtime-context carrier wrappers are user-role rows; the active user turn is
+  // the last real user message, never a carrier. Detect both flagged copies and
+  // legacy envelope text (session-layer rebuilds may drop the flag).
+  const isRuntimeContextWrapper = (message: AgentMessage): boolean => {
+    const record = asNonArrayRecord(message);
+    if (record.runtimeContextCarrier === true) {
+      return true;
+    }
+    const text =
+      typeof record.content === "string"
+        ? record.content
+        : Array.isArray(record.content)
+          ? record.content.map((block) => asNonArrayRecord(block).text ?? "").join("\n")
+          : "";
+    return text.includes(RUNTIME_CONTEXT_BEGIN_MARKER) || text.includes(RUNTIME_CONTEXT_END_MARKER);
+  };
+  const activeUserIndex = messages.findLastIndex(
+    (message) => message.role === "user" && !isRuntimeContextWrapper(message),
+  );
   for (const [index, message] of messages.entries()) {
     if (message.role !== "user") {
       continue;
@@ -550,7 +575,21 @@ async function materializePromptMediaMessages(
         resolvedMedia = undefined;
       }
     }
-    const resolvedMediaOrEmpty = resolvedMedia ?? [];
+    let resolvedMediaOrEmpty = resolvedMedia ?? [];
+    if (options.provider && index === activeUserIndex && !resolvedMediaOrEmpty.length) {
+      const injected = options.currentTurnFacts?.length
+        ? normalizeMediaFacts(options.currentTurnFacts)
+        : undefined;
+      if (injected?.length) {
+        resolvedMedia = injected;
+        resolvedMediaOrEmpty = injected;
+        if (videoHandoffDebugEnabled()) {
+          log.warn(
+            `current-turn fact injection: message=${index}/${messages.length} facts=${injected.length}`,
+          );
+        }
+      }
+    }
     if (videoHandoffDebugEnabled() && options.provider) {
       const userIndexes: number[] = [];
       for (let i = messages.length - 1; i >= 0 && userIndexes.length < 4; i -= 1) {

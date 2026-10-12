@@ -632,6 +632,7 @@ export async function prepareEmbeddedAttemptSessionManager(input: {
         const media = readPersistedMediaFacts(message);
         if (media?.length) {
           attachRuntimePromptMediaFacts(runtimeMessage, media);
+          attempt.currentTurnMediaFacts = media;
         }
         if (videoHandoffDebugEnabled()) {
           tagRuntimePromptTurn(runtimeMessage, `persist:${attempt.runId}`);
@@ -645,6 +646,7 @@ export async function prepareEmbeddedAttemptSessionManager(input: {
       const media = runtimeMessage ? readPersistedMediaFacts(message) : undefined;
       if (runtimeMessage && media?.length) {
         attachRuntimePromptMediaFacts(runtimeMessage, media);
+        attempt.currentTurnMediaFacts = media;
       }
       if (runtimeMessage && videoHandoffDebugEnabled()) {
         tagRuntimePromptTurn(runtimeMessage, `suppressed:${attempt.runId}`);

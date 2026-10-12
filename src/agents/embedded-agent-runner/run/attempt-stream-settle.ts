@@ -461,6 +461,7 @@ export async function prepareEmbeddedAttemptTransport(input: {
       localRoots: input.workspaceOnly
         ? undefined
         : getAgentScopedMediaLocalRoots(attempt.config ?? {}, input.sessionAgentId),
+      currentTurnFacts: attempt.currentTurnMediaFacts,
       onCurrentTurnImageFailure: input.onCurrentTurnImageFailure,
       sandbox:
         input.sandbox?.enabled && input.sandbox.fsBridge
