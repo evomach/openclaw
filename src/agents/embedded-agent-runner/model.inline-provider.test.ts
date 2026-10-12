@@ -3,6 +3,18 @@ import { buildInlineProviderModels } from "./model.inline-provider.js";
 import { makeModel } from "./model.test-harness.js";
 
 describe("buildInlineProviderModels", () => {
+  it("preserves declared video input modality for custom providers", () => {
+    const model = { ...makeModel("vision-video-model"), input: ["text", "image", "video"] };
+    const [entry] = buildInlineProviderModels({
+      "llm-local": {
+        baseUrl: "http://127.0.0.1:5468/v1",
+        api: "openai-completions",
+        models: [model],
+      },
+    });
+    expect(entry?.input).toEqual(["text", "image", "video"]);
+  });
+
   it("inherits the configured Pi transport for models without an API override", () => {
     expect(
       buildInlineProviderModels({
