@@ -8,6 +8,11 @@ import {
   type ImageContent,
   type UserMessage,
 } from "../../../llm/types.js";
+import {
+  attachRuntimePromptMediaFacts,
+  readRuntimePromptImageOrder,
+  readRuntimePromptMediaFacts,
+} from "../../../media/media-facts.js";
 import { INTER_SESSION_PROMPT_PREFIX_BASE } from "../../../sessions/input-provenance.js";
 import { hasPersistedMedia, MEDIA_ONLY_USER_TEXT } from "../../../sessions/user-turn-media.js";
 import { buildLateMediaAttachedProjection } from "../../../sessions/user-turn-transcript.js";
@@ -81,6 +86,19 @@ export function usesEscapedRuntimeContext(sessionVersion?: number): boolean {
   throw new Error(`Unsupported session prompt projection version: ${sessionVersion}`);
 }
 
+/**
+ * Non-enumerable runtime fact symbols do not survive object copies. Re-attach
+ * them onto boundary projections so the active turn's media facts reach provider
+ * materialization instead of being silently omitted.
+ */
+function carryRuntimePromptMediaFacts<T extends object>(source: AgentMessage, copy: T): T {
+  const facts = readRuntimePromptMediaFacts(source as object);
+  if (facts) {
+    attachRuntimePromptMediaFacts(copy, facts, readRuntimePromptImageOrder(source as object));
+  }
+  return copy;
+}
+
 function projectRuntimeContextMessages(
   messages: AgentMessage[],
   options?: LlmBoundaryOptions,
@@ -132,7 +150,10 @@ function projectRuntimeContextMessages(
                 })
               : block,
           );
-    return Object.assign({}, message, { content: projected });
+    return carryRuntimePromptMediaFacts(
+      message,
+      Object.assign({}, message, { content: projected }),
+    );
   });
 }
 
@@ -627,7 +648,10 @@ function normalizeUserMessagesForLlmBoundary(
       return message;
     }
     changed = true;
-    return { ...message, content: nextContent } as AgentMessage;
+    return carryRuntimePromptMediaFacts(message, {
+      ...message,
+      content: nextContent,
+    } as AgentMessage);
   });
   return changed ? nextMessages : messages;
 }
@@ -652,9 +676,12 @@ function stripUnsafeBlockedRunMetadata(messages: AgentMessage[]): AgentMessage[]
       beforeAgentRunBlocked: safeBlocked,
     };
     changed = true;
-    return Object.assign({}, message, {
-      __openclaw: nextOpenClaw,
-    });
+    return carryRuntimePromptMediaFacts(
+      message,
+      Object.assign({}, message, {
+        __openclaw: nextOpenClaw,
+      }),
+    );
   });
   return changed ? nextMessages : messages;
 }
