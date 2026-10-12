@@ -353,7 +353,7 @@ export function streamOpenAICompletionsRequest(
         const finalScan = scanVideoMessages(params.messages ?? [], "video_url");
         getAiTransportHost().logInfo(
           "openai-transport",
-          `openai-completions video probe final: outboundVideos=${finalScan.count}`,
+          `openai-completions video probe final: outboundVideos=${finalScan.count} model=${params.model} provider=${model.provider ?? "?"} api=${model.api ?? "?"} baseUrl=${model.baseUrl ?? "?"} messages=${Array.isArray(params.messages) ? params.messages.length : "?"} tools=${Array.isArray(params.tools) ? params.tools.length : 0} keys=${Object.keys(params).join(",")}`,
         );
       }
       if (mode === "managed") {
