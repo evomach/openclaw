@@ -42,6 +42,7 @@ import {
   type MediaFileRef,
   type MediaImageRef,
 } from "./images.media-refs.js";
+import { videoHandoffDebugEnabled } from "./message-transform-stream-wrapper.js";
 import {
   type ImageFactIndex,
   type MediaImageLayout,
@@ -549,6 +550,19 @@ async function materializePromptMediaMessages(
       }
     }
     const resolvedMediaOrEmpty = resolvedMedia ?? [];
+    if (videoHandoffDebugEnabled() && index === activeUserIndex) {
+      const probeMeta = (meta as { media?: unknown[] } | undefined)?.media;
+      const probeRec = asNonArrayRecord(message);
+      const probeContent =
+        typeof message.content === "string"
+          ? message.content
+          : Array.isArray(message.content)
+            ? message.content.map((block) => asNonArrayRecord(block).text ?? "").join(" ")
+            : "";
+      log.warn(
+        `media shape probe: message=${index}/${messages.length} provider=${Boolean(options.provider)} activeUser=true runtime=${runtimeMedia ? runtimeMedia.length : "none"} metaMedia=${Array.isArray(probeMeta) ? probeMeta.length : "none"} topMedia=${Array.isArray(probeRec.media) ? (probeRec.media as unknown[]).length : "none"} resolved=${resolvedMediaOrEmpty.length} marker=${probeContent.includes("video omitted")}`,
+      );
+    }
     if (options.provider && resolvedMediaOrEmpty.some((fact) => isVideoMediaFact(fact))) {
       const metaMedia = (meta as { media?: unknown[] } | undefined)?.media;
       log.warn(
