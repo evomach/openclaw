@@ -40,7 +40,7 @@ it("recovers background views when a session is replaced during cold target prep
       async (...args) => {
         const display = await resolve(...args);
         await f.setSession({ sessionId: "replacement-session" });
-        const file = statSync(resolveOpenClawAgentSqlitePath("main"));
+        const file = statSync(resolveOpenClawAgentSqlitePath({ agentId: "main" }));
         emitSessionIdentityMutation({
           agentId: "main",
           databaseIdentity: `${file.dev}:${file.ino}`,
