@@ -18,7 +18,11 @@ import { createVitestCacheSlots } from "./lib/vitest-cache-slots.mts";
 import { hasNonRunVitestSubcommand } from "./lib/vitest-cli-mode.mts";
 import { parseVitestExecutionArgs } from "./lib/vitest-cli.mts";
 import { resolveVitestHomeSelection } from "./lib/vitest-home-selection.mts";
-import { isCiLikeEnv, resolveLocalFullSuiteProfile } from "./lib/vitest-local-scheduling.mts";
+import {
+  isCiLikeEnv,
+  resolveLocalFullSuiteProfile,
+  shouldContinueVitestFailures,
+} from "./lib/vitest-local-scheduling.mts";
 import {
   VITEST_INFRASTRUCTURE_EXIT_CODE,
   mergeVitestExitCodes,
@@ -615,7 +619,7 @@ export async function runTestProjects(
       reports,
       termination,
       automatic,
-      isCiLikeEnv(baseEnv),
+      shouldContinueVitestFailures(baseEnv),
       focusedCiShard,
     );
     if (concurrency === 1 && termination.signal) {

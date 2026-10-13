@@ -564,11 +564,16 @@ describe("full-suite timing metadata", () => {
   );
 });
 
-describe("packed CI config continuation", () => {
+describe("packed config continuation", () => {
   const configs = ["test/vitest/vitest.logging.config.ts", "test/vitest/vitest.process.config.ts"];
   it.each([
     { name: "ordinary Linux failure", platform: "linux", code: 1, expected: 2 },
     { name: "ordinary Windows failure", platform: "win32", code: 1, expected: 2 },
+    { name: "local default failure", ci: "", code: 1, expected: 1 },
+    { name: "local opt-out failure", ci: "", optIn: "0", code: 1, expected: 1 },
+    { name: "local opted-in failure", ci: "", optIn: "1", code: 1, expected: 2 },
+    { name: "CI ignores local opt-out", optIn: "0", code: 1, expected: 2 },
+    { name: "local opted-in infrastructure", ci: "", optIn: "1", code: 2, expected: 1 },
     { name: "unknown exit", code: null, expected: 1 },
     { name: "timeout", code: 1, timeout: true, expected: 1 },
     { name: "signal", code: 1, signaled: true, expected: 1 },
@@ -578,12 +583,12 @@ describe("packed CI config continuation", () => {
     vi.spyOn(process, "platform", "get").mockReturnValue(
       scenario.platform === "win32" ? "win32" : "linux",
     );
-    vi.stubEnv("CI", "1");
+    vi.stubEnv("CI", scenario.ci ?? "1");
     vi.stubEnv("OPENCLAW_TEST_PROJECTS_PARALLEL", "1");
     vi.stubEnv("OPENCLAW_VITEST_SHARD_NAME", "serial-fixture");
     vi.stubEnv("OPENCLAW_VITEST_FS_MODULE_CACHE_ROOT", "");
     vi.stubEnv("OPENCLAW_VITEST_FS_MODULE_CACHE_PATH", "");
-    vi.stubEnv("OPENCLAW_NODE_TEST_PLAN_CONTINUE_ON_FAILURE", "");
+    vi.stubEnv("OPENCLAW_NODE_TEST_PLAN_CONTINUE_ON_FAILURE", scenario.optIn ?? "");
     const { runTestProjects } = await import("../../scripts/test-projects-run.mts");
     const selected: string[] = [];
     commands.reader.mockImplementation(({ pnpmArgs, onNoOutputTimeout }) => {
@@ -611,12 +616,14 @@ describe("packed CI config continuation", () => {
     } else {
       await running;
     }
-    expect(console.error).toHaveBeenCalledWith("[test] inner parallelism 1");
+    if (scenario.ci !== "") {
+      expect(console.error).toHaveBeenCalledWith("[test] inner parallelism 1");
+    }
     expect(selected).toEqual(configs.slice(0, scenario.expected));
     if (scenario.signaled) {
       expect(exit).toHaveBeenCalledWith("SIGTERM");
     } else if (!scenario.rejected) {
-      expect(process.exitCode).toBe(scenario.code === null || scenario.timeout ? 2 : 1);
+      expect(process.exitCode).toBe(scenario.code === null || scenario.timeout ? 2 : scenario.code);
     }
   });
 });
