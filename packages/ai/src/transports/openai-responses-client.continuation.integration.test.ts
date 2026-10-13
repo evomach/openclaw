@@ -82,9 +82,11 @@ it.each([true, false])(
       };
       const shifted = events.map((event) => {
         if ("response" in event) {
+          const response = event.response;
+          assert(response);
           return Object.assign({}, event, {
-            response: Object.assign({}, event.response, {
-              output: [reasoning, ...event.response.output],
+            response: Object.assign({}, response, {
+              output: [reasoning, ...response.output],
             }),
           });
         }
