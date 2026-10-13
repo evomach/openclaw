@@ -2,12 +2,32 @@ import { expectDefined } from "@openclaw/normalization-core";
 import { normalizeSubmittedConfigModelRefs } from "../config/model-input-normalization.js";
 import { normalizeAgentModelRefForConfig } from "../config/model-input.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { loadPluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.js";
+import {
+  isPluginMetadataSnapshotCompatible,
+  loadPluginMetadataSnapshot,
+  type PluginMetadataSnapshot,
+} from "../plugins/plugin-metadata-snapshot.js";
 import type { PathSegment } from "./config-cli-path.js";
 
-export function normalizeConfigMutationModelRefs(cfg: OpenClawConfig): OpenClawConfig {
-  const pluginMetadata = loadPluginMetadataSnapshot({ config: cfg, env: process.env });
-  return normalizeSubmittedConfigModelRefs(cfg, pluginMetadata.owners.modelIdNormalizationPolicies);
+export function normalizeConfigMutationModelRefs(
+  cfg: OpenClawConfig,
+  options: { pluginMetadataSnapshot?: PluginMetadataSnapshot; env?: NodeJS.ProcessEnv } = {},
+): OpenClawConfig {
+  return normalizeSubmittedConfigModelRefs(cfg, () => {
+    const env = options.env ?? process.env;
+    const prepared = options.pluginMetadataSnapshot;
+    const pluginMetadata =
+      prepared &&
+      isPluginMetadataSnapshotCompatible({
+        snapshot: prepared,
+        config: cfg,
+        env,
+        workspaceDir: prepared.workspaceDir,
+      })
+        ? prepared
+        : loadPluginMetadataSnapshot({ config: cfg, env });
+    return pluginMetadata.owners.modelIdNormalizationPolicies;
+  });
 }
 
 export function normalizeConfigMutationExplicitSetPath(path: PathSegment[]): PathSegment[] {
