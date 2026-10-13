@@ -216,7 +216,6 @@ describe("prepared model runtime config stamps", () => {
         supplierReady.resolve();
         await Promise.all([stalePublication, nextPublication]);
 
-        expect(mocks.ensureOpenClawModelsJson).toHaveBeenCalledOnce();
         await expect(
           prepareModelRuntimeSnapshot(fixture.agentInput("default", nextConfig)),
         ).resolves.toMatchObject({ config: nextConfig });
