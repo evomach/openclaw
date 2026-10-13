@@ -26,8 +26,7 @@ export function createAgentDatabaseHandleCloser(cache: {
     const lease = cache.leases.get(database.path);
     const alreadyClosed = !database.db.isOpen;
     const priorCheckpointError = database.walMaintenance.health?.state === "error";
-    const publishSeal =
-      !alreadyClosed ? prepareSqliteDatabaseCleanClose(database.db) : undefined;
+    using seal = !alreadyClosed ? prepareSqliteDatabaseCleanClose(database.db) : undefined;
     let clean: { path: string; publishSeal: () => boolean } | undefined;
     let retainRuntimeProof: boolean;
     try {
@@ -51,8 +50,8 @@ export function createAgentDatabaseHandleCloser(cache: {
         // Native last-close may finish a checkpoint; a pinned WAL must remain unsealed.
         const closedWithEmptyWal =
           (statSync(`${canonicalPath}-wal`, { throwIfNoEntry: false })?.size ?? 0) === 0;
-        if (publishSeal && closedWithEmptyWal) {
-          clean = { path: database.path, publishSeal };
+        if (seal && closedWithEmptyWal) {
+          clean = { path: database.path, publishSeal: seal.publish };
         }
       }
     } catch (error) {
