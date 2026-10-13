@@ -77,6 +77,7 @@ import type { InboundMessageAuditTerminalRecorder } from "./dispatch-from-config
 import { appendRecentHistoryImageContext } from "./history-media.js";
 import { hasInboundMediaForUnderstanding } from "./inbound-media.js";
 import type { ReplyDispatchKind } from "./reply-dispatcher.types.js";
+import { readReplyTurnAdoption } from "./reply-turn-adoption.js";
 import { assertPreparedConversationBindingRouteCurrent } from "./session-conversation-binding.js";
 
 const loadDispatchAcpManagerRuntime = createLazyPromise(
@@ -132,6 +133,7 @@ export async function tryDispatchAcpReplyCore(
   prepareChannelParticipantObservation(params.ctx);
   const inputRecorder = params.userTurnTranscriptRecorder;
   const input = bindUserTurnInput(inputRecorder, () => params.abortSignal?.throwIfAborted());
+  const adoptInput = readReplyTurnAdoption(params.ctx);
 
   const { getAcpSessionManager, maybeUnbindStaleBoundConversations, prepareAcpDispatchStart } =
     await loadDispatchAcpManagerRuntime();
@@ -646,6 +648,16 @@ export async function tryDispatchAcpReplyCore(
       mode: "prompt",
       requestId,
       ...(params.abortSignal ? { signal: params.abortSignal } : {}),
+      onBeforePrompt: async () => {
+        await input.withCurrent(() => {});
+        await adoptInput?.();
+        await assertPreparedConversationBindingRouteCurrent(params.ctx);
+        await input.withCurrent(() => {
+          if (getAdmittedRunDelegatedAuthority(turnAdmission) === undefined) {
+            throw new Error("ACP turn admission ended before input dispatch.");
+          }
+        });
+      },
       onElicitation,
       onLifecycle: recordUnsupportedNativeActionEvidence,
       onEvent: async (event) => {

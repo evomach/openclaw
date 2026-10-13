@@ -69,6 +69,7 @@ import {
 } from "./reply-operation-run-state.js";
 import { replyRunRegistry } from "./reply-run-registry.js";
 import { isReplyProfilerEnabled } from "./reply-timing-tracker.js";
+import { bindReplyTurnAdoption } from "./reply-turn-adoption.js";
 import { resolveRoutedDeliveryThreadId } from "./routed-delivery-thread.js";
 import { stageRemoteInboundMediaIfNeeded } from "./stage-remote-inbound-media.js";
 
@@ -106,6 +107,9 @@ export async function gatherDispatchRequest(
         : {}),
     },
   };
+  if (normalizedParams.replyOptions?.turnAdoptionLifecycle) {
+    onDispose?.(bindReplyTurnAdoption(ctx, normalizedParams.replyOptions.turnAdoptionLifecycle));
+  }
   const replyOperationRunState: ReplyOperationRunState =
     resolveReplyOperationRunState(normalizedParams.replyOptions) ?? {};
   let replayUnsafeActivity = false;
