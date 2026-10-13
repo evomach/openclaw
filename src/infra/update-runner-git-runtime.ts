@@ -305,15 +305,45 @@ export async function prepareGitRuntimePromotion(
         recursive: true,
         preserveTimestamps: true,
         verbatimSymlinks: true,
-        // An unused filter prevents Node from using its native directory-copy path.
-        filter: disposableCaches.size > 0 ? (source) => !disposableCaches.has(source) : undefined,
+        // Avoid native junction traversal and preserve Windows' unprivileged directory links.
+        filter:
+          process.platform === "win32" || disposableCaches.size > 0
+            ? async (source, target) => {
+                if (disposableCaches.has(source)) {
+                  return false;
+                }
+                if (process.platform === "win32" && (await fs.lstat(source)).isSymbolicLink()) {
+                  const directory = await fs.stat(source).then(
+                    (stat) => stat.isDirectory(),
+                    () => false,
+                  );
+                  if (directory) {
+                    const link = await fs.readlink(source);
+                    await fs.symlink(path.resolve(path.dirname(source), link), target, "junction");
+                    return false;
+                  }
+                }
+                return true;
+              }
+            : undefined,
       });
       assertDestination?.(destination);
       await relocateRuntimeTree(candidate, sourceRoot, destination, relocations);
     }
   } catch (error) {
-    await cleanup();
-    throw error;
+    try {
+      await cleanup();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [error, cleanupError],
+        "Git runtime staging failed; inspect the retained staging directories before retrying openclaw update.",
+        { cause: cleanupError },
+      );
+    }
+    throw new Error(
+      `${formatErrorMessage(error)}; check available disk space and file permissions, then retry openclaw update.`,
+      { cause: error },
+    );
   }
   const assertParents = (entry: (typeof staged)[number]) => {
     const identities = entry.identities;

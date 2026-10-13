@@ -19,6 +19,7 @@ import {
 } from "../../test/scripts/run-node.test-support.js";
 import { CommandProcessCleanupError } from "../process/exec-result.js";
 import { runCommandWithTimeout } from "../process/exec.js";
+import { hasErrnoCode } from "./errno.js";
 import { expectRuntime, writeRuntime } from "./update-runner-git-candidate.test-support.js";
 import { prepareGitRuntimePromotion } from "./update-runner-git-runtime.js";
 
@@ -80,6 +81,74 @@ describe("Git runtime promotion", () => {
     await promotion.activate();
     await promotion.cleanup();
   }
+
+  it.each(["dir", "junction"] as const)(
+    "preserves an ancestor workspace %s without expanding it",
+    async (linkType, context) => {
+      const candidateRoot = await createCandidate();
+      const relativeLink = path.join("extensions", "fixture", "node_modules", "openclaw");
+      const sourceLink = path.join(candidateRoot, relativeLink);
+      await fs.mkdir(path.dirname(sourceLink), { recursive: true });
+      try {
+        await fs.symlink(
+          linkType === "junction" ? candidateRoot : "../../..",
+          sourceLink,
+          linkType,
+        );
+      } catch (error) {
+        if (hasErrnoCode(error, "EPERM") || hasErrnoCode(error, "ENOSYS")) {
+          context.skip("Directory symlinks are unavailable on this platform");
+          return;
+        }
+        throw error;
+      }
+
+      await activate(candidateRoot);
+
+      const installedLink = path.join(root, relativeLink);
+      expect((await fs.lstat(installedLink)).isSymbolicLink()).toBe(true);
+      expect(await fs.realpath(installedLink)).toBe(root);
+      await expectRuntime(root, "candidate");
+      expect(await fs.readdir(path.dirname(installedLink))).toEqual(["openclaw"]);
+      expect((await fs.readdir(root)).some((name) => name.includes(".openclaw-update-"))).toBe(
+        false,
+      );
+    },
+  );
+
+  it.each([false, true])(
+    "retains copy errors and reports how to retry (cleanup fails: %s)",
+    async (cleanupFails) => {
+      const candidateRoot = await createCandidate();
+      const copyError = new Error("copy refused");
+      const cleanupError = new Error("cleanup refused");
+      const copy = vi.spyOn(fs, "cp").mockImplementationOnce(async (_source, destination) => {
+        await fs.mkdir(String(destination), { recursive: true });
+        await fs.writeFile(path.join(String(destination), "partial"), "partial copy");
+        throw copyError;
+      });
+      const remove = vi.spyOn(fs, "rm");
+      if (cleanupFails) {
+        remove.mockRejectedValueOnce(cleanupError);
+      }
+      try {
+        await expect(preparePromotion(candidateRoot)).rejects.toMatchObject({
+          message: expect.stringContaining("openclaw update"),
+          cause: cleanupFails ? cleanupError : copyError,
+          ...(cleanupFails
+            ? { errors: [copyError, expect.objectContaining({ errors: [cleanupError] })] }
+            : {}),
+        });
+      } finally {
+        copy.mockRestore();
+        remove.mockRestore();
+      }
+      expect((await fs.readdir(root)).some((name) => name.includes(".openclaw-update-"))).toBe(
+        cleanupFails,
+      );
+      await expectRuntime(root, "original");
+    },
+  );
 
   it.each([false, true])(
     "does not repeat completed restoration after authority is lost (previous runtime: %s)",

@@ -452,6 +452,19 @@ ownership; promoted runtime outputs do not need regeneration. Published updaters
 that pass the source build-cache location, including 2026.9.6, also receive the
 installed-checkout check during candidate builds.
 
+On Windows, source runtime staging preserves workspace symlinks and junctions
+instead of expanding links back to the checkout. A failed copy removes its owned
+staging directories before reporting the error; if cleanup also fails, both
+errors are retained for inspection before retrying.
+This copy runs in the installed updater. An older updater can still fail at
+`preflight-runtime-stage` while installing a candidate containing the fix.
+The candidate's `OPENCLAW_UPDATE_IN_PROGRESS` build marker does not transfer
+ownership of this copy. For that first upgrade, update the checkout and its
+dependencies manually, then follow the
+[source rebuild sequence](/install/updating/update-methods#source-checkout-servers-reference-script).
+If the failed attempt left the managed Gateway stopped, start the previous build
+with `openclaw gateway start` before retrying through that path.
+
 The canary uses a temporary loopback Gateway port and suppresses background
 listeners, including the MCP Apps sandbox, browser control, and channel services.
 This lets validation run while the serving Gateway keeps its configured ports.
