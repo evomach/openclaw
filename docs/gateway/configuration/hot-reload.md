@@ -45,8 +45,10 @@ removing an agent still revokes access to that agent's stores.
 Concurrent writers release each completed reload's lifecycle lease through the shared
 writer queue, so a busy database does not leave later reloads waiting for lease expiry.
 A database-open refusal for a deleting agent leaves other agents' admitted work usable.
-Heartbeat monitors deferred by that agent's deletion do not require a Gateway restart.
-Their existing reconciliation retry restores the monitors if deletion rolls back.
+Heartbeat monitor writes that temporarily fail, including during startup or agent
+deletion, do not require a Gateway restart. The cron owner logs the failure and
+retries against the accepted config after 30 seconds. If deletion rolls back,
+that retry restores the monitors.
 Overlapping agent edits can supersede an earlier model-runtime refresh. If that
 refresh fails, the newer config retries the unfinished preparation without
 requiring a Gateway restart, including when the newer edit does not change models.

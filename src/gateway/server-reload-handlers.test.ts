@@ -2039,8 +2039,8 @@ describe("gateway hot reload model state", () => {
     },
   );
 
-  it.each(["rejected", "noop"] as const)(
-    "keeps partial monitor writes aligned with accepted config through a %s successor",
+  it.each(["startup", "rejected", "noop"] as const)(
+    "keeps monitor retries aligned with accepted config during %s",
     async (successor) => {
       const clock = createGatewaySchedulerClock(Date.now());
       const scheduler = createTestGatewayScheduler(clock.clock);
@@ -2074,7 +2074,9 @@ describe("gateway hot reload model state", () => {
         broadcast: vi.fn(),
       });
       cronState.cron.pauseScheduling();
-      const publicationFailure = createMonitorPublicationFailure();
+      const publicationFailure = createMonitorPublicationFailure(
+        successor === "startup" ? "INSERT" : "UPDATE",
+      );
       let state = createDefaultGatewayReloadState({ cronState });
       const requestRecoveryRestart = vi.fn(() => ({ status: "emitted" as const }));
       const handlers = createGatewayReloadHandlers({
@@ -2121,7 +2123,10 @@ describe("gateway hot reload model state", () => {
           .toSorted((left, right) => (left.agentId ?? "").localeCompare(right.agentId ?? ""))
           .map((job) => (job.schedule.kind === "every" ? job.schedule.everyMs : undefined));
       try {
-        await expect(cronState.reconcileSystemJobs()).resolves.toBe("converged");
+        // Startup maintenance has not created the monitors yet in the startup case.
+        if (successor !== "startup") {
+          await expect(cronState.reconcileSystemJobs()).resolves.toBe("converged");
+        }
         publicationFailure.install();
         const result = await managed
           .onHotReload(
@@ -2131,8 +2136,11 @@ describe("gateway hot reload model state", () => {
             nextConfig,
           )
           .catch((error: unknown) => error);
-        expect(await readIntervals()).toEqual([7_200_000, 3_600_000]);
-        expect(result).toBe("applied-restart-required");
+        expect(await readIntervals()).toEqual(
+          successor === "startup" ? [7_200_000] : [7_200_000, 3_600_000],
+        );
+        expect(result).toBe("applied");
+        expect(requestRecoveryRestart).not.toHaveBeenCalled();
         expect(markRuntimeCommitted).toHaveBeenCalledOnce();
         expect(getActiveSecretsRuntimeSnapshot()?.config).toEqual(nextConfig);
         publicationFailure.remove();
@@ -2146,7 +2154,7 @@ describe("gateway hot reload model state", () => {
               successorConfig,
             ),
           ).rejects.toThrow("superseded");
-        } else {
+        } else if (successor === "noop") {
           await expect(
             managed.onHotReload(
               buildGatewayReloadPlan([]),
@@ -2158,6 +2166,7 @@ describe("gateway hot reload model state", () => {
         }
         await clock.advanceBy(30_000);
         expect(await readIntervals()).toEqual([7_200_000, 7_200_000]);
+        expect(requestRecoveryRestart).not.toHaveBeenCalled();
       } finally {
         try {
           publicationFailure.dispose();
@@ -2169,6 +2178,28 @@ describe("gateway hot reload model state", () => {
       }
     },
   );
+
+  it("retains restart recovery when cron reconciliation rejects without scheduling a retry", async () => {
+    const requestRecoveryRestart = vi.fn(() => ({ status: "emitted" as const }));
+    const handlers = createReloadHandlersForTest(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      requestRecoveryRestart,
+    );
+    handlers.reconcileSystemJobs.mockRejectedValueOnce(new Error("cron reconciliation failed"));
+    try {
+      await expect(
+        handlers.applyHotReload(buildGatewayReloadPlan(["agents.defaults.heartbeat.every"]), {
+          agents: { defaults: { heartbeat: { every: "2h" } } },
+        }),
+      ).resolves.toBe("applied-restart-required");
+      expect(requestRecoveryRestart).toHaveBeenCalledOnce();
+    } finally {
+      handlers.stopRestartRetries();
+    }
+  });
 
   it("rejects an ownerless heartbeat update failure before runtime commit", async () => {
     const publish = vi.fn(async (commit: () => Promise<void>) => await commit());

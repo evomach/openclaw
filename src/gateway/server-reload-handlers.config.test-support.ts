@@ -16,7 +16,7 @@ import type {
   ManagedGatewayConfigReloaderParams,
 } from "./server-reload-contracts.js";
 
-export function createMonitorPublicationFailure() {
+export function createMonitorPublicationFailure(operation: "INSERT" | "UPDATE" = "UPDATE") {
   const database = openOpenClawStateDatabase();
   return {
     install() {
@@ -24,7 +24,7 @@ export function createMonitorPublicationFailure() {
       // outstanding grants instead of blocking the host needed to finish their write.
       runOpenClawStateWriteTransaction(
         ({ db }) =>
-          db.exec(`CREATE TRIGGER monitor_publication_failure BEFORE UPDATE ON cron_jobs
+          db.exec(`CREATE TRIGGER monitor_publication_failure BEFORE ${operation} ON cron_jobs
           WHEN json_extract(NEW.job_json, '$.agentId') = 'second'
             AND json_extract(NEW.job_json, '$.schedule.everyMs') = 7200000
           BEGIN SELECT RAISE(FAIL, 'monitor write failed'); END`),
