@@ -144,6 +144,7 @@ export function registerNaturalExitTests(waitForLoopTurn: () => Promise<void>) {
         });
         exitAfterSignalExitBarriers(7);
         await closing.promise;
+        expect(gatewayLog.info).toHaveBeenCalledWith("received process exit; shutting down");
         expect(runtime.exit).not.toHaveBeenCalled();
         expect(process.exitCode).toBe(previousCode);
         closed.resolve();
@@ -158,6 +159,53 @@ export function registerNaturalExitTests(waitForLoopTurn: () => Promise<void>) {
       process.exitCode = previousCode;
     }
   });
+
+  it.each([false, true])(
+    "records an unhandled rejection stop reason (already restarting: %s)",
+    async (restart) => {
+      const { exitAfterSignalExitBarriers } = await import("../signal-exit-barrier.js");
+      const closing = createDeferredCore();
+      const closed = createDeferredCore();
+      const completeBoot = vi.fn();
+      try {
+        await withIsolatedSignals(async ({ captureSignal }) => {
+          const close = createCloseMock();
+          close.mockImplementationOnce(async () => {
+            closing.resolve();
+            await closed.promise;
+          });
+          const { start, started } = createSignaledStart(close);
+          const { runtime, exited } = createRuntimeWithExitSignal();
+          await runLoopFixture.runLoopWithStart({
+            start,
+            runtime,
+            ownsProcessLifecycle: true,
+            completeBoot,
+          });
+          await waitForStart(started);
+          if (restart) {
+            captureSignal("SIGUSR2")();
+            await closing.promise;
+          }
+          exitAfterSignalExitBarriers(1, "unhandled rejection");
+          await closing.promise;
+          closed.resolve();
+          await expect(exited).resolves.toBe(1);
+          expect(completeBoot).toHaveBeenCalledWith({
+            outcome: "clean_stop",
+            reason: "stop (process exit: unhandled rejection)",
+          });
+          expect(gatewayLog.info).toHaveBeenCalledWith(
+            restart
+              ? "received unhandled rejection during shutdown; finishing shutdown without restart"
+              : "received unhandled rejection; shutting down",
+          );
+        });
+      } finally {
+        closed.resolve();
+      }
+    },
+  );
 
   it("joins native watchdog cancellation before terminal completion", async () => {
     const cancelling = createDeferredCore();

@@ -74,9 +74,12 @@ export function formatStartupFailureCompletion(
   };
 }
 
-export function formatHostExitCompletion(failed: boolean): GatewayBootLifecycleCompletion {
+export function formatHostExitCompletion(
+  failed: boolean,
+  reason?: GatewayDrainReason,
+): GatewayBootLifecycleCompletion {
   return {
     outcome: failed ? "forced_stop" : "clean_stop",
-    reason: failed ? "gateway.restart_close_failed" : "stop (host lifeline closed)",
+    reason: failed ? "gateway.restart_close_failed" : (reason ?? "stop (process exit)"),
   };
 }

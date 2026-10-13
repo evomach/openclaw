@@ -1,5 +1,6 @@
 import { sql, type Expression, type RawBuilder, type SqlBool } from "kysely";
 import { OPENCLAW_RUNTIME_CONTEXT_CUSTOM_TYPE } from "../../agents/internal-runtime-context.js";
+import { SOURCE_PAGE_MAX_BYTES } from "../../gateway/session-transcript-source-pages.js";
 import {
   executeSqliteQuerySync,
   executeSqliteQueryTakeFirstSync,
@@ -162,29 +163,33 @@ export function readDisplayableActiveEventById(
   maxBytes?: number,
 ) {
   const db = getActiveTranscriptKysely(projection.database);
+  const limit = Math.min(maxBytes ?? SOURCE_PAGE_MAX_BYTES, SOURCE_PAGE_MAX_BYTES);
   const indexed = executeSqliteQueryTakeFirstSync(
     projection.database.db,
     selectDisplayableActiveEventById(projection, eventId).select((eb) =>
-      maxBytes === undefined
-        ? transcriptEventJsonSql(projection.database.db, "event").as("event_json")
-        : eb
-            .case()
-            .when(eb(transcriptEventReadBytesSql("event"), "<=", maxBytes))
-            .then(transcriptEventJsonSql(projection.database.db, "event"))
-            .else(null)
-            .end()
-            .as("event_json"),
+      eb
+        .case()
+        .when(eb(transcriptEventReadBytesSql("event"), "<=", limit))
+        .then(transcriptEventJsonSql(projection.database.db, "event"))
+        .else(null)
+        .end()
+        .as("event_json"),
     ),
   );
   assertTranscriptNavigationValid(indexed?.navigation_valid);
   if (indexed) {
+    if (indexed.event_json === null && maxBytes === undefined) {
+      throw new Error(
+        `Transcript history message exceeds the ${SOURCE_PAGE_MAX_BYTES}-byte page limit`,
+      );
+    }
     return indexed.event_json === null ? undefined : { ...indexed, event_json: indexed.event_json };
   }
   const unindexed = findUnindexedActiveTranscriptEntry(projection, eventId);
   if (
     !unindexed ||
     (unindexed.message_position === null && !isVisibleHistoryNonMessageEvent(unindexed.event)) ||
-    (maxBytes !== undefined && unindexed.serialized_bytes - 1 > maxBytes)
+    unindexed.serialized_bytes - 1 > limit
   ) {
     return undefined;
   }
@@ -284,8 +289,16 @@ function readHistoricalDisplayEventRange(
     return Object.assign(row, { displaySeq: start + index + 1 });
   });
   let selected = ranged;
+  if (
+    maxBytes === undefined &&
+    ranged.reduce((bytes, row) => bytes + row.serialized_bytes, 2) > SOURCE_PAGE_MAX_BYTES
+  ) {
+    throw new Error(
+      `Transcript history page exceeds the ${SOURCE_PAGE_MAX_BYTES}-byte limit; request a smaller limit`,
+    );
+  }
   if (maxBytes !== undefined) {
-    const limit = Math.max(1_024, Math.floor(maxBytes));
+    const limit = Math.min(SOURCE_PAGE_MAX_BYTES, Math.max(1_024, Math.floor(maxBytes)));
     let bytes = 2;
     let selectedStart = ranged.length;
     while (selectedStart > 0) {

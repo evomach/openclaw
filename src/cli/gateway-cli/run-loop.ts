@@ -12,6 +12,7 @@ import { consumeGatewaySuspendHandoff } from "../../infra/gateway-suspend-coordi
 import type { GatewayRestartIntent } from "../../infra/restart-intent.js";
 import { findStartupMaintenanceRequiredError } from "../../infra/startup-maintenance-required.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
+import type { GatewayDrainReason } from "../../process/gateway-work-admission.js";
 import { runWithProcessCleanupBudget } from "../../process/supervisor/cleanup-budget.js";
 import { drainGlobalSingletonLifecycleState } from "../../shared/global-singleton.js";
 import { formatCliCommand } from "../command-format.js";
@@ -104,6 +105,7 @@ export async function runGatewayLoop(params: {
   let shuttingDown = false;
   let hostExitRequested = false;
   let hostExitCode = 0;
+  let hostExitReason: GatewayDrainReason | undefined;
   let releaseHostLifeline: (() => void) | undefined;
   let releaseOutputOwner: (() => void) | undefined;
   const requestWatchdogs = new Set<() => void>();
@@ -374,7 +376,7 @@ export async function runGatewayLoop(params: {
       return;
     }
     if (hostExitRequested) {
-      completeBoot(loopCompletion.formatHostExitCompletion(Boolean(failure)));
+      completeBoot(loopCompletion.formatHostExitCompletion(Boolean(failure), hostExitReason));
       return finishLoopAfterCleanup(failure ? 1 : 0);
     }
     // Lock release may yield while a managed update upgrades this restart.
@@ -890,14 +892,18 @@ export async function runGatewayLoop(params: {
         foregroundUpdateClosed || (pendingStartupRequest ?? activeRestartRequest)?.foregroundUpdate,
         {
           beforeWait: () => {
-            const drainReason = `stop (${signal})` as const;
+            const drainReason = loopCompletion.formatShutdownReason({
+              action: "stop",
+              signal,
+              restartReason,
+            });
             eagerLifecycleRuntime.markGatewayDraining(drainReason);
             startupWatchdog.clear();
             forceActiveRestartExit?.();
           },
           onPark: (successorOwner) =>
             request("restart", signal, "update.run", { successorOwner }, hostedStop),
-          onSettled: () => request("stop", signal, undefined, undefined, hostedStop),
+          onSettled: () => request("stop", signal, restartReason, undefined, hostedStop),
         },
       ) ||
       foregroundUpdateClosed
@@ -916,6 +922,10 @@ export async function runGatewayLoop(params: {
         eagerLifecycleRuntime.isForegroundUpdateHandoff(restartIntent.successorOwner),
       hostedStop,
     };
+    const trigger = action === "stop" ? (restartReason ?? signal) : signal;
+    if (hostExitRequested && action === "stop") {
+      hostExitReason ??= loopCompletion.formatShutdownReason(acceptedRequest);
+    }
     restartRecovery.abort();
     if (shuttingDown) {
       const currentRestartRequest = pendingStartupRequest ?? activeRestartRequest;
@@ -934,7 +944,7 @@ export async function runGatewayLoop(params: {
         return;
       }
       if (action === "stop" && pendingStartupRequest && !server) {
-        gatewayLog.info(`received ${signal}; overriding pending startup restart with shutdown`);
+        gatewayLog.info(`received ${trigger}; overriding pending startup restart with shutdown`);
         pendingStartupRequest = null;
         startupWatchdog.clear();
         startupFailedWithoutServerHandle = false;
@@ -944,7 +954,7 @@ export async function runGatewayLoop(params: {
         return;
       }
       gatewayLog.info(
-        `received ${signal} during shutdown; ${hostExitRequested ? "finishing shutdown without restart" : "ignoring"}`,
+        `received ${trigger} during shutdown; ${hostExitRequested ? "finishing shutdown without restart" : "ignoring"}`,
       );
       return;
     }
@@ -975,7 +985,7 @@ export async function runGatewayLoop(params: {
       eagerLifecycleRuntime.markGatewayDraining(drainReason);
     }
     shuttingDown = true;
-    gatewayLog.info(`received ${signal}; ${isRestart ? "restarting" : "shutting down"}`);
+    gatewayLog.info(`received ${trigger}; ${isRestart ? "restarting" : "shutting down"}`);
     if (isRestart) {
       restartTrace.startGatewayRestartTrace("restart.signal.received", [
         ["signal", signal],
@@ -1030,12 +1040,12 @@ export async function runGatewayLoop(params: {
   let loopFailure: { error: unknown } | undefined;
   try {
     if (params.ownsProcessLifecycle) {
-      releaseOutputOwner = registerSignalExitOwner((code) => {
+      releaseOutputOwner = registerSignalExitOwner((code, reason) => {
         if (Number(code) !== 0 && hostExitCode === 0) {
           hostExitCode = Number(code);
         }
         hostExitRequested = true;
-        request("stop", "host lifeline closed");
+        request("stop", "process exit", reason);
       });
     }
     releaseHostLifeline = installGatewayHostLifeline(() => {
