@@ -149,7 +149,7 @@ export function createCrabboxWarmImageAllocation({
     assertCurrent(context);
     await runProvisionWarmup({
       ...context,
-      runCommand: runCommand,
+      runCommand,
     });
     return { kind: "cold" };
   };

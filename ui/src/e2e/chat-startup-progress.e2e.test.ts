@@ -198,7 +198,7 @@ suite.define(() => {
     const sessionKey = "agent:main:main";
     const runId = "synthetic-cloud-start";
     const startedAt = Date.now();
-    const session: GatewaySessionRow = {
+    const session: GatewaySessionRow & { updatedAt: number } = {
       key: sessionKey,
       sessionId: "synthetic-cloud-session",
       kind: "direct",
