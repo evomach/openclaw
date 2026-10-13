@@ -26,6 +26,7 @@ import {
 import { createHookRunnerWithRegistry } from "../../../plugins/hooks.test-fixtures.js";
 import { withEnvAsync } from "../../../test-utils/env.js";
 import { makeAssistantMessageFixture } from "../../test-helpers/assistant-message-fixtures.js";
+import { makeProviderModelFixture } from "../../test-helpers/provider-model-fixture.js";
 import { wrapStreamFnWithDiagnosticModelCallEvents } from "./attempt.model-diagnostic-events.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
@@ -299,16 +300,30 @@ describe("model diagnostic lifecycle", () => {
   );
 
   it("marks serialized request bytes before transport consumption without logging content", async () => {
-    const wrapped = wrap((async (_model, _context, options) => {
+    const wrapped = wrap(async (_model, _context, options) => {
       const request = await prepareModelRequestBody(options)({
         stream: true,
         input: [{ role: "user", content: "private preparation fixture" }],
       });
       expect(new TextDecoder().decode(request.body)).toContain("private preparation fixture");
-      return undefined;
-    }) as unknown as StreamFn);
+      const source = createAssistantMessageEventStream();
+      source.end(
+        makeAssistantMessageFixture({ stopReason: "stop", content: [], errorMessage: undefined }),
+      );
+      return source;
+    });
     const events = await timeline(async () => {
-      await wrapped({} as never, { messages: [] });
+      const response = await wrapped(
+        makeProviderModelFixture({
+          id: "test-model",
+          provider: "openai",
+          api: "openai-responses",
+          baseUrl: "https://synthetic.invalid",
+        }),
+        { messages: [] },
+      );
+      await drain(response);
+      await response.result();
     });
     expect(events.map((event) => event.name)).toEqual([
       "provider.request.started",

@@ -187,12 +187,18 @@ type HarnessContextEngineAssemblyParams = Omit<
 };
 
 export async function assembleHarnessContextEngine(params: HarnessContextEngineAssemblyParams) {
-  if (!params.contextEngine) {
+  const contextEngine = params.contextEngine;
+  if (!contextEngine) {
     return undefined;
   }
-  return runWithHarnessSourceFence(params, () =>
-    assembleHarnessContextEngineWithinSourceScope(params),
-  );
+  return runWithHarnessSourceFence(params, async () => {
+    const assembled = await assembleHarnessContextEngineWithinSourceScope(params, contextEngine);
+    return boundContextEngineAssembly(
+      assembled,
+      resolveContextEngineTranscriptByteLimit(contextEngine),
+      resolveAssemblyHistoryTokenBudget(params),
+    );
+  });
 }
 
 function resolveAssemblyHistoryTokenBudget(params: HarnessContextEngineAssemblyParams) {
@@ -210,11 +216,8 @@ function resolveAssemblyHistoryTokenBudget(params: HarnessContextEngineAssemblyP
 
 async function assembleHarnessContextEngineWithinSourceScope(
   params: HarnessContextEngineAssemblyParams,
+  contextEngine: ContextEngine,
 ) {
-  if (!params.contextEngine) {
-    return undefined;
-  }
-  const contextEngine = params.contextEngine;
   const tokenBudget = resolveAssemblyHistoryTokenBudget(params);
   const maxOutputTokens = params.promptBudget
     ? Math.max(0, Math.floor(params.promptBudget.reserveTokens))
@@ -258,11 +261,7 @@ async function assembleHarnessContextEngineWithinSourceScope(
           },
           assemble,
         );
-  return boundContextEngineAssembly(
-    ensureAssembleResultShape(result, contextEngine.info.id),
-    resolveContextEngineTranscriptByteLimit(contextEngine),
-    tokenBudget,
-  );
+  return ensureAssembleResultShape(result, contextEngine.info.id);
 }
 
 type PreparedHarnessContextEnginePrompt = {
@@ -285,7 +284,8 @@ export async function prepareHarnessContextEnginePrompt(
     systemPrompt: params.promptBudget.systemPrompt,
     contextEnginePromptAuthority: "assembled",
   };
-  if (!params.contextEngine) {
+  const contextEngine = params.contextEngine;
+  if (!contextEngine) {
     return {
       ...initial,
       messages: params.repairToolUseResultPairing
@@ -294,45 +294,39 @@ export async function prepareHarnessContextEnginePrompt(
     };
   }
   return runWithHarnessSourceFence(params, async () => {
-    let prepared: PreparedHarnessContextEnginePrompt;
+    const preassemblyMessages = params.messages.slice();
+    let assembled: AssembleResult;
     try {
-      const preassemblyMessages = params.messages.slice();
-      const assembled = await assembleHarnessContextEngineWithinSourceScope(params);
-      if (!assembled) {
-        throw new Error("context engine assemble returned no result");
-      }
-      const authority = assembled.promptAuthority ?? "assembled";
-      prepared = {
-        messages: assembled.messages,
-        systemPrompt: assembled.systemPromptAddition
-          ? prependSystemPromptAdditionAfterCacheBoundary({
-              systemPrompt: initial.systemPrompt,
-              systemPromptAddition: assembled.systemPromptAddition,
-            })
-          : initial.systemPrompt,
-        contextEnginePromptAuthority: authority,
-        ...(authority === "preassembly_may_overflow"
-          ? { unwindowedContextEngineMessagesForPrecheck: preassemblyMessages }
-          : {}),
-      };
+      assembled = await assembleHarnessContextEngineWithinSourceScope(params, contextEngine);
     } catch (error) {
       params.warn(`context engine assemble failed, using pipeline messages: ${String(error)}`);
-      prepared = {
-        ...initial,
-        messages: boundContextEngineAssembly(
-          { messages: initial.messages, estimatedTokens: 0 },
-          resolveContextEngineTranscriptByteLimit(params.contextEngine),
-          resolveAssemblyHistoryTokenBudget(params),
-        ).messages,
-      };
+      assembled = { messages: initial.messages, estimatedTokens: 0 };
     }
-    // Windowing and engine hooks can both orphan results. Repair the final model
-    // view once, including bounded fallback, while source authority is retained.
+    // Repair before the final byte bound: synthetic results also consume budget.
+    // Keep both operations inside the retained source-authority fence.
+    const bounded = boundContextEngineAssembly(
+      {
+        ...assembled,
+        messages: params.repairToolUseResultPairing
+          ? sanitizeToolUseResultPairingForModel(assembled.messages, params.isOpenAIResponsesApi)
+          : assembled.messages,
+      },
+      resolveContextEngineTranscriptByteLimit(contextEngine),
+      resolveAssemblyHistoryTokenBudget(params),
+    );
+    const authority = bounded.promptAuthority ?? "assembled";
     return {
-      ...prepared,
-      messages: params.repairToolUseResultPairing
-        ? sanitizeToolUseResultPairingForModel(prepared.messages, params.isOpenAIResponsesApi)
-        : prepared.messages,
+      messages: bounded.messages,
+      systemPrompt: bounded.systemPromptAddition
+        ? prependSystemPromptAdditionAfterCacheBoundary({
+            systemPrompt: initial.systemPrompt,
+            systemPromptAddition: bounded.systemPromptAddition,
+          })
+        : initial.systemPrompt,
+      contextEnginePromptAuthority: authority,
+      ...(authority === "preassembly_may_overflow"
+        ? { unwindowedContextEngineMessagesForPrecheck: preassemblyMessages }
+        : {}),
     };
   });
 }

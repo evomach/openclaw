@@ -78,6 +78,7 @@ describe("harness context engine lifecycle", () => {
       const warn = vi.fn();
       const result = await prepareHarnessContextEnginePrompt({
         ...sessionParams,
+        modelId: "test-model",
         messages,
         ...(mode === "absent"
           ? {}
@@ -111,6 +112,70 @@ describe("harness context engine lifecycle", () => {
       });
       expect(JSON.stringify(messages)).toBe(before);
       expect(warn).toHaveBeenCalledTimes(mode === "fallback" ? 1 : 0);
+    },
+  );
+
+  it.each([false, true])(
+    "counts synthetic tool results in the byte cap (engine throws=%s)",
+    async (throws) => {
+      const engineId = uniqueConfiguredProofEngineId();
+      const messages: AgentMessage[] = [
+        textMessage("user", "old history ".repeat(500), 1),
+        textMessage("user", "Run the tools", 2),
+        {
+          role: "assistant",
+          content: Array.from({ length: 6 }, (_, index) => ({
+            type: "toolCall",
+            id: `call_fixture_${index}`,
+            name: "exec",
+            arguments: {},
+          })),
+          timestamp: 3,
+        } as AgentMessage,
+        textMessage("user", "Current surviving request", 4),
+      ];
+      const original = JSON.stringify(messages);
+      const cap = Buffer.byteLength(JSON.stringify(messages.slice(1))) + 1;
+      await registerTestContextEngine(engineId, () =>
+        createContextEngine({
+          info: { id: engineId, name: engineId },
+          assemble: async ({ messages: input }) => {
+            if (throws) {
+              throw new Error("fixture assembly failure");
+            }
+            return { messages: input, estimatedTokens: 0 };
+          },
+        }),
+      );
+      const lease = await createContextEngineLogicalTurnLease({
+        identity: { runId: engineId, sessionId: sessionParams.sessionId },
+        config: {
+          plugins: { slots: { contextEngine: engineId } },
+          agents: { defaults: { compaction: { maxActiveTranscriptBytes: cap } } },
+        },
+      });
+      try {
+        const bounded = await prepareHarnessContextEnginePrompt({
+          ...sessionParams,
+          contextEngine: lease.engine,
+          messages,
+          modelId: "test-model",
+          promptBudget: {
+            contextTokens: 100_000,
+            reserveTokens: 0,
+            systemPrompt: "Required instructions",
+            prompt: "next",
+          },
+          repairToolUseResultPairing: true,
+          isOpenAIResponsesApi: true,
+          warn: vi.fn(),
+        });
+        expect(bounded.messages).toEqual(messages.slice(3));
+        expect(Buffer.byteLength(JSON.stringify(bounded.messages))).toBeLessThanOrEqual(cap);
+        expect(JSON.stringify(messages)).toBe(original);
+      } finally {
+        await lease.dispose();
+      }
     },
   );
 

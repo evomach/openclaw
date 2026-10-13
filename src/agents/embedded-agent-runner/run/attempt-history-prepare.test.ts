@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { awaitGateBeforeSettlement, createDeferred } from "../../../../test/helpers/promise.js";
 import type { SessionEntry } from "../../../config/sessions/types.js";
+import { createStageTimingTracker } from "../../../shared/stage-timing.js";
 import type { AgentMessage } from "../../runtime/index.js";
 import { SettingsManager } from "../../sessions/settings-manager.js";
 import { createToolResultPromptProjectionState } from "../session-prompt-state.js";
@@ -85,7 +86,7 @@ function createFixture() {
     setup: {
       sessionAgentId: "main",
       effectiveWorkspace: "/tmp/s11-hierarchy",
-      prepStages: { mark: vi.fn() },
+      prepStages: createStageTimingTracker(() => 0),
     },
   } as Parameters<typeof prepareEmbeddedAttemptHistory>[0];
   const controller = new AbortController();
