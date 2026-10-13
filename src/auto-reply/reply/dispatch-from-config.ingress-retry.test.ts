@@ -298,7 +298,7 @@ it.each(["completed", "cancelled", "adoption-rejected"] as const)(
       await queue.enqueue("long-acp-turn", { text: "Complete the long task" });
       let dispatcher = createDispatcher();
       const controller = new AbortController();
-      const dispatched = createDeferred();
+      let dispatched = createDeferred();
       const rejected = new Error("Ingress adoption refused");
       let rejectAdoption = outcome === "adoption-rejected";
       const drain = createChannelIngressDrain({
@@ -335,10 +335,12 @@ it.each(["completed", "cancelled", "adoption-rejected"] as const)(
           expect(await queue.listPending()).toMatchObject([{ id: "long-acp-turn", attempts: 1 }]);
           rejectAdoption = false;
           dispatcher = createDispatcher();
+          dispatched = createDeferred();
           await vi.advanceTimersByTimeAsync(1);
           expect(await drain.drainOnce()).toEqual({ started: 1 });
           await started.promise;
           release.resolve();
+          await dispatched.promise;
           await drain.waitForIdle();
           expect(dispatcher.sendFinalReply).toHaveBeenCalledExactlyOnceWith(
             expect.objectContaining({ text: "Long task completed." }),
