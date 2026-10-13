@@ -6,6 +6,8 @@ read_when: "You are writing a profile setup command, or you need a custom node d
 
 What runs on the leased box before enrollment, how the Gateway prepares and verifies the runtime archive it installs there, and how to build a complete custom node package.
 
+For repository dependencies and lifecycle commands, commit a [cloud environment file](/gateway/cloud-workers/environment-file). OpenClaw uses `.devcontainer/devcontainer.json` or `.devcontainer.json` before the committed executable `.openclaw/worktree-setup.sh` fallback, then detects JavaScript dependency installs when neither exists. Preparation commands run before capture; `postCreateCommand` and `postStartCommand` run after session workspace binding. Keep `settings.setup` below focused on machine prerequisites.
+
 ## The setup command
 
 Crabbox coordinator transport timeouts before profile setup, node runtime preparation, or node enrollment scripts start allow up to three attempts with backoff, within the existing phase budget. Only output consisting entirely of coordinator timeout diagnostics qualifies; any script output prevents retry. Lease inspection, readiness reads, heartbeat, and release use the same bounded retry policy; allocation remains owned by Gateway provisioning replay. Exhausted retries preserve the coordinator diagnostic and report the number of attempts.

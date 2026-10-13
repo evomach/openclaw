@@ -6,6 +6,11 @@ import type {
 import { isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import type { CrabboxOperatingSystem } from "./crabbox-worker-profile.js";
 import {
+  normalizeRecipePreparation,
+  type CrabboxProjectPreparationMetadata,
+  type RecipePreparation,
+} from "./crabbox-worker-warm-image-recipe.js";
+import {
   legacyLeaseSelector,
   LEGACY_WARM_LEASE_MAX_ENTRIES,
   projectCrabboxLegacyWarmLeases,
@@ -17,7 +22,6 @@ export type CrabboxState = Pick<OpenClawPluginApi["runtime"]["state"], "openKeye
 type WorkerNodeRuntimeIdentity = NonNullable<
   NonNullable<Parameters<WorkerProvider["provision"]>[2]>["nodeRuntimeIdentity"]
 >;
-
 export type WarmImageRecord = {
   checkpointId: string;
   kind: string;
@@ -39,6 +43,8 @@ export type WarmAllocationRecord = {
   /** Absent in existing Linux allocations. */
   os?: CrabboxOperatingSystem;
   phase: "pending" | "prepared" | "enrolled";
+  /** Failed detected setup must never be published, including during teardown. */
+  captureSkipped?: string;
   preparationKey: string | null;
   cacheKey: string | null;
   purpose: "session" | "reserve" | null;
@@ -61,6 +67,8 @@ export type WarmProfileRecord = {
   projectLabel?: string;
   projectRoot?: string;
   projectKey?: string;
+  recipePreparation?: RecipePreparation;
+  recipePreparationAtMs?: number;
   image?: WarmImageRecord;
   previous?: WarmImageRecord;
   /** Latest native-capture refusal; retained for display without suppressing later attempts. */
@@ -164,12 +172,33 @@ function requireCanonicalProfile(record: WarmProfileRecord | undefined) {
           (allocation.preparationKey !== null && allocation.demandAtMs === null) ||
           (allocation.imageGeneration !== null && !validGeneration(allocation.imageGeneration)) ||
           (allocation.publicationBase !== undefined &&
-            !validGeneration(allocation.publicationBase)),
+            !validGeneration(allocation.publicationBase)) ||
+          (allocation.captureSkipped !== undefined &&
+            (typeof allocation.captureSkipped !== "string" ||
+              !allocation.captureSkipped ||
+              allocation.captureSkipped.length > 1024)),
       ))
   ) {
     throw new Error("Crabbox warm-image preparation state is invalid; run openclaw doctor --fix.");
   }
-  return record;
+  if (!record || record.recipePreparation === undefined) {
+    return record;
+  }
+  const normalized = { ...record };
+  delete normalized.recipePreparation;
+  delete normalized.recipePreparationAtMs;
+  const recipePreparation = normalizeRecipePreparation(record.recipePreparation);
+  if (recipePreparation) {
+    normalized.recipePreparation = recipePreparation;
+    if (
+      record.recipePreparationAtMs !== undefined &&
+      record.recipePreparationAtMs !== null &&
+      demandAtMs(record.recipePreparationAtMs)
+    ) {
+      normalized.recipePreparationAtMs = record.recipePreparationAtMs;
+    }
+  }
+  return normalized;
 }
 
 export const isCrabboxCaptureRefusalRetained = (
@@ -285,7 +314,7 @@ export function openCrabboxWarmImageStore(state: CrabboxState, env?: NodeJS.Proc
     async entries() {
       const entries = await store.entries();
       for (const entry of entries) {
-        requireCanonicalProfile(entry.value);
+        entry.value = requireCanonicalProfile(entry.value)!;
       }
       return entries;
     },
@@ -321,7 +350,9 @@ export function openCrabboxWarmImageStore(state: CrabboxState, env?: NodeJS.Proc
     phase: "prepared" | "enrolled",
     baseCommit?: string,
     assertCurrent?: () => void,
+    metadata?: CrabboxProjectPreparationMetadata,
   ) => {
+    const recipePreparation = normalizeRecipePreparation(metadata?.recipePreparation);
     const owner = await lookupLease(id);
     if (!owner) {
       return;
@@ -355,12 +386,16 @@ export function openCrabboxWarmImageStore(state: CrabboxState, env?: NodeJS.Proc
       }
       return {
         ...record,
+        ...(recipePreparation ? { recipePreparation, recipePreparationAtMs: Date.now() } : {}),
         allocations: {
           ...record.allocations,
           [id]: {
             ...allocation,
             phase: allocation.phase === "enrolled" ? "enrolled" : phase,
             ...(baseCommit ? { baseCommit } : {}),
+            ...(metadata?.captureSkipped
+              ? { captureSkipped: metadata.captureSkipped.slice(0, 1024) }
+              : {}),
           },
         },
       };
@@ -373,6 +408,23 @@ export function openCrabboxWarmImageStore(state: CrabboxState, env?: NodeJS.Proc
   return {
     ...canonical,
     lookupLease,
+    async noteRecipePreparation(
+      id: string,
+      metadata: RecipePreparation,
+      assertCurrent: () => void,
+    ) {
+      const recipePreparation = normalizeRecipePreparation(metadata);
+      const owner = await lookupLease(id);
+      if (!owner || !recipePreparation) {
+        return;
+      }
+      await canonical.update(owner.key, (record) => {
+        assertCurrent();
+        return record?.allocations[id]
+          ? { ...record, recipePreparation, recipePreparationAtMs: Date.now() }
+          : undefined;
+      });
+    },
     async recordAllocation(params: {
       key: string;
       id: string;
@@ -461,8 +513,14 @@ export function openCrabboxWarmImageStore(state: CrabboxState, env?: NodeJS.Proc
       }
       return owner;
     },
-    markPrepared: (id: string, baseCommit: string, assertCurrent?: () => void) =>
-      markPhase(id, "prepared", baseCommit, assertCurrent),
+    markPrepared(
+      id: string,
+      baseCommit: string,
+      assertCurrent?: () => void,
+      metadata?: CrabboxProjectPreparationMetadata,
+    ) {
+      return markPhase(id, "prepared", baseCommit, assertCurrent, metadata);
+    },
     markEnrolled: (id: string, assertCurrent?: () => void) =>
       markPhase(id, "enrolled", undefined, assertCurrent),
     async notePreparedDemand(
@@ -539,8 +597,8 @@ export async function listCrabboxWarmImages(state: CrabboxState, env?: NodeJS.Pr
   );
 }
 
-export function projectCrabboxWarmImage(key: string, value: WarmProfileRecord) {
-  requireCanonicalProfile(value);
+export function projectCrabboxWarmImage(key: string, record: WarmProfileRecord) {
+  const value = requireCanonicalProfile(record)!;
   return {
     profileKey: key,
     profileId: value.profileId,
@@ -550,6 +608,8 @@ export function projectCrabboxWarmImage(key: string, value: WarmProfileRecord) {
     projectLabel: value.projectLabel,
     projectRoot: value.projectRoot,
     projectKey: value.projectKey,
+    recipePreparation: value.recipePreparation,
+    recipePreparationAtMs: value.recipePreparationAtMs,
     checkpointId: value.image?.checkpointId,
     state: value.image?.state ?? "no-image",
     createdAtMs: value.image?.createdAtMs,
