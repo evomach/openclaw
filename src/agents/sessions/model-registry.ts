@@ -41,6 +41,7 @@ import {
 } from "./model-registry-runtime.js";
 import {
   formatValidationPath,
+  rejectInvalidModelCosts,
   validateModelsConfig,
   type ProviderAuthMode,
 } from "./model-registry-schema.js";
@@ -469,7 +470,9 @@ export class ModelRegistry {
         return emptyCustomModelsResult();
       }
 
-      if (!validateModelsConfig.Check(parsed)) {
+      const valid = validateModelsConfig.Check(parsed);
+      const catalogWarnings = valid ? [] : rejectInvalidModelCosts(parsed);
+      if (!valid && !validateModelsConfig.Check(parsed)) {
         const errors =
           validateModelsConfig
             .Errors(parsed)
@@ -518,7 +521,9 @@ export class ModelRegistry {
           : captureProviderSource(providerConfig, "authored");
       }
 
-      const pluginCatalogErrors: string[] = [];
+      const pluginCatalogErrors = catalogWarnings.map(
+        (warning) => `${warning}\nFile: ${modelsJsonPath}`,
+      );
       if (options.includePluginCatalogs !== false) {
         let pluginCatalogs: readonly PersistedPluginModelCatalog[] = [];
         try {

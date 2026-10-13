@@ -170,6 +170,40 @@ const ModelsConfigSchema = Type.Object({
 export const validateModelsConfig = Compile(ModelsConfigSchema);
 
 export type ModelsConfig = Static<typeof ModelsConfigSchema>;
+
+/** Reject malformed pricing rows without weakening validation of the surviving catalog. */
+export function rejectInvalidModelCosts(value: unknown): string[] {
+  const rejected = new Map<string, Set<number>>();
+  const warnings: string[] = [];
+  for (const error of validateModelsConfig.Errors(value)) {
+    const match = /^(\/providers\/[^/]+\/models)\/(\d+)\/cost(?:\/|$)/.exec(error.instancePath);
+    if (!match?.[1] || !match[2]) {
+      continue;
+    }
+    const modelsPath = match[1];
+    const index = Number(match[2]);
+    const indices = rejected.get(modelsPath) ?? new Set<number>();
+    if (!indices.has(index)) {
+      const provider = Pointer.Indices(modelsPath)[1];
+      const id = Pointer.Get(value, `${modelsPath}/${index}/id`);
+      warnings.push(`Skipped model ${provider}/${String(id)}: invalid cost.`);
+      indices.add(index);
+      rejected.set(modelsPath, indices);
+    }
+  }
+  for (const [modelsPath, indices] of rejected) {
+    const models = Pointer.Get(value, modelsPath);
+    if (Array.isArray(models)) {
+      Pointer.Set(
+        value,
+        modelsPath,
+        models.filter((_, index) => !indices.has(index)),
+      );
+    }
+  }
+  return warnings;
+}
+
 export function formatValidationPath(error: TLocalizedValidationError): string {
   const path = Pointer.Indices(error.instancePath).join(".").replace(/\//g, ".");
   if (error.keyword === "required") {
