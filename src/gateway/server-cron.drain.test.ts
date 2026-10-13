@@ -14,9 +14,9 @@ import { isCronJobActive } from "../cron/active-jobs.js";
 import { waitForActiveCronTaskRuns } from "../cron/service/active-run-cancellation.js";
 import { captureCronSchedulerWakeForTest } from "../cron/service/scheduler-actor.test-support.js";
 import * as cronServiceState from "../cron/service/state.js";
+import * as cronRunFinalization from "../cron/service/timer-outcome-finalization.js";
 import * as cronStore from "../cron/store.js";
 import { trackAsyncWork } from "../shared/async-work-scope.js";
-import * as workerStore from "../state/openclaw-state-worker-store.js";
 import {
   createGatewaySchedulerClock,
   createTestGatewayScheduler,
@@ -376,18 +376,15 @@ describe("gateway cron stop-and-drain automation ownership", () => {
       let jobId: string | undefined;
       const original = await startGatewayCron("finalization", false);
       const realLoad = cronStore.loadCronJobsStoreWithConfigJobs;
-      const execute = workerStore.executeOpenClawStateWorker;
+      const finalize = cronRunFinalization.finalizeCompletedCronRunOutcomes;
       const finalization = vi
-        .spyOn(workerStore, "executeOpenClawStateWorker")
-        .mockImplementation(async (context, command) => {
-          if (
-            command.type === "cron.finalizeRuns" &&
-            command.input.snapshot.outcomes.some((outcome) => outcome.jobId === jobId)
-          ) {
+        .spyOn(cronRunFinalization, "finalizeCompletedCronRunOutcomes")
+        .mockImplementation(async (cronState, outcomes, opts) => {
+          if (outcomes.some((outcome) => outcome.jobId === jobId)) {
             finalizationEntered.resolve();
             await releaseFinalization.promise;
           }
-          return execute(context, command);
+          return finalize(cronState, outcomes, opts);
         });
       let run: Promise<unknown> | undefined;
       let drain: Promise<void> | undefined;
