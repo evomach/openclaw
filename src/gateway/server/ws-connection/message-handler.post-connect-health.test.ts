@@ -142,7 +142,8 @@ vi.mock("../../../state/user-profile-writes.js", async (importOriginal) => {
   };
 });
 
-vi.mock("../../../infra/host-account-name.js", () => ({
+vi.mock("../../../infra/host-account-name.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../infra/host-account-name.js")>()),
   resolveHostAccountName: resolveHostAccountNameMock,
 }));
 

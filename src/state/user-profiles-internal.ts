@@ -185,6 +185,7 @@ export function selectProfileDisplayEntries(db: DatabaseSync, ids?: string[]) {
             .where("subject", "=", "owner")
             .whereRef("profile_id", "=", "user_profiles.id")
             .where("user_profiles.id", "=", GATEWAY_OWNER_PROFILE_ID)
+            .$asScalar()
             .as("gateway_owner_created_at")
         : eb.val<number | null>(null).as("gateway_owner_created_at"),
     );
