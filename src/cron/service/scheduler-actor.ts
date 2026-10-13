@@ -18,6 +18,7 @@ import { CRON_AGENT_SELECTION_REQUIRED_MESSAGE } from "../agent-id.js";
 import { noteCronJobsStoreCommit } from "../store.js";
 import { cronStoreKey } from "../store/key.js";
 import type { CronSchedulerResult } from "../store/scheduler-actor.types.js";
+import { locked } from "./locked.js";
 import { registerCronSchedulerRefresh } from "./run-queue-wake.js";
 import {
   adoptCronRunRequests,
@@ -153,7 +154,7 @@ export async function startCronScheduler(
     started = true;
     state.schedulerStarted = true;
     await publish(state, result);
-    await launchCronRunQueueResult(state, result, context);
+    await locked(state, () => launchCronRunQueueResult(state, result, context));
     const completed = await Promise.allSettled(requests.map((request) => request.completion));
     const failed = completed.find((completion) => completion.status === "rejected");
     if (failed?.status === "rejected") {
@@ -223,7 +224,7 @@ async function runCronSchedulerTick(
       });
       adoptCronRunRequests(state, result.accepted, { source: "scheduled" }, undefined, generation);
       await publish(state, result);
-      await launchCronRunQueueResult(state, result);
+      await locked(state, () => launchCronRunQueueResult(state, result));
     });
   } finally {
     admission.release();

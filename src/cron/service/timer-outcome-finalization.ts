@@ -13,7 +13,7 @@ import {
 } from "./runtime-publication.js";
 import { recomputeUnownedCronSchedules } from "./schedule-maintenance.js";
 import { cronFailureNotificationEventContext, emit, type CronServiceState } from "./state.js";
-import { runPostPersistCronNotifications } from "./store.js";
+import { ensureLoaded, runPostPersistCronNotifications } from "./store.js";
 import type { TimedCronRunOutcome } from "./timer-execution-timeout.js";
 
 type CompletedCronRunOutcomeFinalizationOptions = {
@@ -43,6 +43,9 @@ export async function finalizeCompletedCronRunOutcomes(
   let committedSuccessfully = false;
   try {
     const committed = await locked(state, async () => {
+      if (!state.store) {
+        await ensureLoaded(state);
+      }
       const { outcome: result } = await executeOpenClawStateWorker(context, {
         type: "cron.finalizeRuns",
         input: {

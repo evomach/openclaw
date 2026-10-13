@@ -97,7 +97,9 @@ it("commits execution, delivery, and history once despite an owner edit and a du
         .prepare("SELECT COUNT(*) AS count FROM task_runs WHERE source_id = ?")
         .get(job.id),
     ).toEqual({ count: 0 });
-    expect((await loadCronStore(storePath)).jobs[0].state.runningReceiptId).toBe(receipt.receiptId);
+    expect((await loadCronStore(storePath)).jobs[0]?.state.runningReceiptId).toBe(
+      receipt.receiptId,
+    );
     database.db.exec("DROP TRIGGER fail_cron_history");
     expect(finalize("ok").outcome.eventPlans).toHaveLength(1);
     expect(finalize("error").outcome.eventPlans).toHaveLength(0);

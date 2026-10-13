@@ -2,7 +2,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { expectDefined } from "@openclaw/normalization-core/expect";
-import { asNonArrayRecord } from "@openclaw/normalization-core/record-coerce";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   awaitGateBeforeSettlement,
@@ -17,6 +16,7 @@ import { captureCronSchedulerWakeForTest } from "../cron/service/scheduler-actor
 import * as cronServiceState from "../cron/service/state.js";
 import * as cronStore from "../cron/store.js";
 import { trackAsyncWork } from "../shared/async-work-scope.js";
+import * as workerStore from "../state/openclaw-state-worker-store.js";
 import {
   createGatewaySchedulerClock,
   createTestGatewayScheduler,
@@ -374,24 +374,20 @@ describe("gateway cron stop-and-drain automation ownership", () => {
       const releaseFinalization = createDeferred();
       const stopError = new Error("exit watcher drain failed");
       let jobId: string | undefined;
-      let holdFinalization = false;
-      const original = await startGatewayCron("finalization", false, (event, payload) => {
-        const change = asNonArrayRecord(payload);
-        if (event === "cron" && change.jobId === jobId && change.action === "started") {
-          holdFinalization = true;
-        }
-      });
+      const original = await startGatewayCron("finalization", false);
       const realLoad = cronStore.loadCronJobsStoreWithConfigJobs;
-      const load = vi
-        .spyOn(cronStore, "loadCronJobsStoreWithConfigJobs")
-        .mockImplementation(async (storePath) => {
-          const snapshot = await realLoad(storePath);
-          if (holdFinalization && storePath === original.state.storePath) {
-            holdFinalization = false;
+      const execute = workerStore.executeOpenClawStateWorker;
+      const finalization = vi
+        .spyOn(workerStore, "executeOpenClawStateWorker")
+        .mockImplementation(async (context, command) => {
+          if (
+            command.type === "cron.finalizeRuns" &&
+            command.input.outcomes.some((outcome) => outcome.jobId === jobId)
+          ) {
             finalizationEntered.resolve();
             await releaseFinalization.promise;
           }
-          return snapshot;
+          return execute(context, command);
         });
       let run: Promise<unknown> | undefined;
       let drain: Promise<void> | undefined;
@@ -446,7 +442,7 @@ describe("gateway cron stop-and-drain automation ownership", () => {
       } finally {
         releaseFinalization.resolve();
         await Promise.allSettled([run, drain]);
-        load.mockRestore();
+        finalization.mockRestore();
         if (stopResult === "exit-watcher-failure" && drain) {
           await expect(cleanGatewayCron(original)).rejects.toBe(stopError);
         } else {
