@@ -118,6 +118,13 @@ describe("prepareOomScoreAdjustedSpawn", () => {
   });
 });
 
+it("preserves native ENOENT for missing plugin commands", async () => {
+  const child = spawnOomScoreAdjusted("/openclaw-nonexistent-oom-test-command", [], {
+    stdio: "ignore",
+  });
+  await expect(once(child, "spawn")).rejects.toMatchObject({ code: "ENOENT" });
+});
+
 it.runIf(process.platform === "linux").each([undefined, "/opt/shims/claude"])(
   "sets the child OOM score while preserving argv0 %s and the parent score",
   async (argv0) => {

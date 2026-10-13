@@ -78,16 +78,10 @@ export function spawnOomScoreAdjusted(
   args: readonly string[],
   options: SpawnOptions,
 ): ChildProcess {
-  if (options.shell) {
-    return spawn(command, args, options);
+  const child = spawn(command, args, options);
+  if (!options.shell && shouldAdjustChildOomScore(options)) {
+    raiseChildOomScore(child.pid);
   }
-  const prepared = prepareOomScoreAdjustedSpawn(command, args, options);
-  const child = spawn(prepared.command, prepared.args, {
-    ...options,
-    argv0: prepared.argv0,
-    env: prepared.env,
-  });
-  prepared.afterSpawn?.(child.pid);
   return child;
 }
 

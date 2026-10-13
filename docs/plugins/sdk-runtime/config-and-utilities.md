@@ -106,10 +106,10 @@ late startup and process cleanup; uncertain cleanup remains an error.
 
 For plugin-owned long-lived children, use `spawnOomScoreAdjusted` from the same
 subpath with native `spawn` options. On Linux it raises the child's
-`oom_score_adj` to `1000` so memory pressure preferentially kills the child.
-Custom `argv0` values retain native launch semantics: the parent adjusts the
-child immediately after spawning it, leaving a brief window in which the child
-and its earliest descendants can inherit the parent's score. The Gateway's
+`oom_score_adj` to `1000` immediately after native spawn so memory pressure
+preferentially kills the child. This preserves custom `argv0`, the environment,
+and native launch errors. There is a brief window before the score write;
+descendants created in that window can retain the inherited score. The Gateway's
 score is never changed. `OPENCLAW_CHILD_OOM_SCORE_ADJ=0` disables the policy;
 explicit `shell` launches remain caller-owned. Lower-level users of
 `prepareOomScoreAdjustedSpawn` must call its optional `afterSpawn(child.pid)`
