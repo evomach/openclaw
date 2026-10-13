@@ -382,7 +382,7 @@ describe("gateway cron stop-and-drain automation ownership", () => {
         .mockImplementation(async (context, command) => {
           if (
             command.type === "cron.finalizeRuns" &&
-            command.input.outcomes.some((outcome) => outcome.jobId === jobId)
+            command.input.snapshot.outcomes.some((outcome) => outcome.jobId === jobId)
           ) {
             finalizationEntered.resolve();
             await releaseFinalization.promise;
@@ -404,7 +404,11 @@ describe("gateway cron stop-and-drain automation ownership", () => {
         });
         jobId = job.id;
         run = original.state.cron.run(job.id, "force");
-        await finalizationEntered.promise;
+        await awaitGateBeforeSettlement(
+          finalizationEntered.promise,
+          run,
+          "Cron run settled before entering finalization",
+        );
         expect(await waitForActiveCronTaskRuns(0)).toEqual({ drained: true, active: 0 });
         expect(isCronJobActive(job.id)).toBe(true);
         if (stopResult === "exit-watcher-failure") {
@@ -441,8 +445,8 @@ describe("gateway cron stop-and-drain automation ownership", () => {
         expect(isCronJobActive(job.id)).toBe(false);
       } finally {
         releaseFinalization.resolve();
-        await Promise.allSettled([run, drain]);
         finalization.mockRestore();
+        await Promise.allSettled([run, drain]);
         if (stopResult === "exit-watcher-failure" && drain) {
           await expect(cleanGatewayCron(original)).rejects.toBe(stopError);
         } else {
