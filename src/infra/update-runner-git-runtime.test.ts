@@ -82,7 +82,7 @@ describe("Git runtime promotion", () => {
     await promotion.cleanup();
   }
 
-  it.each(["dir", "junction"] as const)(
+  it.for(["dir", "junction"] as const)(
     "preserves an ancestor workspace %s without expanding it",
     async (linkType, context) => {
       const candidateRoot = await createCandidate();
