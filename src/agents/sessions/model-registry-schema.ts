@@ -178,7 +178,7 @@ export function rejectInvalidModelCosts(value: unknown): string[] {
   for (const error of validateModelsConfig.Errors(value)) {
     const match = /^(\/providers\/[^/]+\/models)\/(\d+)\/cost(?:\/|$)/.exec(error.instancePath);
     if (!match?.[1] || !match[2]) {
-      continue;
+      return [];
     }
     const modelsPath = match[1];
     const index = Number(match[2]);

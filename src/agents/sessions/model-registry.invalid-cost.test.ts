@@ -47,7 +47,18 @@ describe("model catalog invalid cost isolation", () => {
     },
   );
 
-  it("still rejects invalid non-pricing fields", () => {
+  it.each([
+    {
+      models: [{ id: "bad-input", input: ["invalid"], cost: null }],
+      headers: {},
+      path: "providers.fixture.models.0.input",
+    },
+    {
+      models: [{ id: "bad-cost", cost: null }],
+      headers: { invalid: 42 },
+      path: "providers.fixture.headers.invalid",
+    },
+  ])("still rejects invalid non-pricing fields ($path)", ({ models, headers, path }) => {
     const registry = ModelRegistry.fromCapturedSources(
       AuthStorage.inMemory(),
       "/synthetic/models.json",
@@ -57,8 +68,8 @@ describe("model catalog invalid cost isolation", () => {
             fixture: {
               api: "openai-completions",
               baseUrl: "https://models.example/v1",
-              models: [{ id: "bad-input", input: ["invalid"], cost: null }],
-              headers: { invalid: 42 },
+              models,
+              headers,
             },
           },
         }),
@@ -68,6 +79,6 @@ describe("model catalog invalid cost isolation", () => {
 
     expect(registry.getAll()).toEqual([]);
     expect(registry.getError()).toContain("Invalid models.json schema");
-    expect(registry.getError()).toContain("providers.fixture.headers.invalid");
+    expect(registry.getError()).toContain(path);
   });
 });
