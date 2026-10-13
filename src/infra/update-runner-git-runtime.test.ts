@@ -134,7 +134,7 @@ describe("Git runtime promotion", () => {
       try {
         await expect(preparePromotion(candidateRoot)).rejects.toMatchObject({
           message: expect.stringContaining("openclaw update"),
-          cause: cleanupFails ? cleanupError : copyError,
+          cause: cleanupFails ? expect.objectContaining({ errors: [cleanupError] }) : copyError,
           ...(cleanupFails
             ? { errors: [copyError, expect.objectContaining({ errors: [cleanupError] })] }
             : {}),
