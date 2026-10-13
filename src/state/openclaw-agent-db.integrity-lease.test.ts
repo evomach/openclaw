@@ -359,16 +359,16 @@ it.each(["idle-peer", "settled", "pinned", "checkpoint-error"] as const)(
       }
     }
     if (outcome === "checkpoint-error") {
-      expect(owner.record()).toBeUndefined();
+      expect(owner.cleanClose()).toBe(false);
     } else {
       expect(incompleteCheckpoint).toBe(outcome !== "idle-peer");
       const walBytes = fs.statSync(`${database.path}-wal`, { throwIfNoEntry: false })?.size ?? 0;
       if (outcome === "pinned") {
         expect(walBytes).toBeGreaterThan(0);
-        expect(owner.record()?.clean_close).toBe(0);
+        expect(owner.cleanClose()).toBe(false);
       } else {
         expect(walBytes).toBe(0);
-        expect(owner.record()?.clean_close).toBe(1);
+        expect(owner.cleanClose()).toBe(true);
         if (outcome === "idle-peer") {
           expect(reader.isOpen).toBe(true);
         }
