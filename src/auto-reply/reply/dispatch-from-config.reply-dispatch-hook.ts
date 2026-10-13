@@ -5,6 +5,7 @@ import {
   createReplyDispatchEvent,
 } from "./dispatch-from-config.events.js";
 import type { PrepareDispatchOperationReadyState } from "./dispatch-from-config.prepare-operation.js";
+import { readReplyTurnAdoption } from "./reply-turn-adoption.js";
 
 export function runReplyDispatchHook(
   state: PrepareDispatchOperationReadyState,
@@ -71,7 +72,10 @@ export function runReplyDispatchHook(
                 recordProcessed: state.recordProcessed,
                 markIdle: state.markIdle,
               },
-              options.isTailDispatch ? undefined : { prepare: state.assertCurrentBindingRoute },
+              {
+                ...(!options.isTailDispatch ? { prepare: state.assertCurrentBindingRoute } : {}),
+                assertCurrent: readReplyTurnAdoption(state.ctx)?.assertCurrent,
+              },
             ),
           );
         },

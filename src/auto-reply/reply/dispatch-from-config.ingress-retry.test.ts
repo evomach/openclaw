@@ -12,12 +12,17 @@ import {
   observeChannelIngressQueueWrite,
   withTempState,
 } from "../../channels/message/ingress-drain.test-helpers.js";
+import type { PluginHookReplyDispatchContext } from "../../plugins/hook-types.js";
+import { createHookRunner } from "../../plugins/hooks.js";
+import { createRuntimeTestRegistry } from "../../plugins/registry-runtime.test-helpers.js";
+import { createPluginRecord } from "../../plugins/status.test-fixtures.js";
 import type { MsgContext } from "../templating.js";
 import type { GetReplyOptions } from "../types.js";
 import {
   acpManagerRuntimeMocks,
   acpMocks,
   createDispatcher,
+  hookMocks,
 } from "./dispatch-from-config.shared.test-harness.js";
 import {
   automaticDirectReplyConfig,
@@ -26,6 +31,7 @@ import {
   dispatchReplyFromConfig,
   globalBeforeAll0,
   setNoAbort,
+  tryDispatchAcpReplyHook,
 } from "./dispatch-from-config.test-support.js";
 import {
   withDispatchProcessedOutcomeSink,
@@ -252,7 +258,7 @@ it.each(["completed", "cancelled", "adoption-rejected"] as const)(
       runtime.runTurn.mockImplementation(async function* () {
         started.resolve();
         await release.promise;
-        if (outcome === "completed") {
+        if (outcome !== "cancelled") {
           yield { type: "text_delta", text: "Long task completed." };
         }
         yield { type: "done", status: outcome === "cancelled" ? "cancelled" : "completed" };
@@ -275,17 +281,32 @@ it.each(["completed", "cancelled", "adoption-rejected"] as const)(
         });
       });
       acpManagerRuntimeMocks.getAcpSessionManager.mockReturnValue({ ...manager, runTurn });
+      const builder = createRuntimeTestRegistry();
+      builder
+        .createApi(createPluginRecord({ id: "acpx", origin: "bundled" }), { config: cfg })
+        .on("reply_dispatch", tryDispatchAcpReplyHook, { priority: 10 });
+      const fallback = vi.fn(() => undefined);
+      builder
+        .createApi(createPluginRecord({ id: "fallback", origin: "bundled" }), { config: cfg })
+        .on("reply_dispatch", fallback);
+      const hooks = createHookRunner(builder.registry);
+      hookMocks.runner.runReplyDispatch.mockImplementation((event, context) =>
+        hooks.runReplyDispatch(event, context as PluginHookReplyDispatchContext),
+      );
       const queue = createTestIngressQueue(stateDir);
+      const released = observeChannelIngressQueueWrite(queue, "release");
       await queue.enqueue("long-acp-turn", { text: "Complete the long task" });
       const dispatcher = createDispatcher();
       const controller = new AbortController();
       const dispatched = createDeferred();
       const rejected = new Error("Ingress adoption refused");
+      let rejectAdoption = outcome === "adoption-rejected";
       const drain = createChannelIngressDrain({
         queue,
+        retryPolicy: { baseMs: 1, maxMs: 1 },
         dispatchClaimedEvent: async (_event, lifecycle) => {
           const replyOptions = bindIngressLifecycleToReplyOptions(lifecycle);
-          if (outcome === "adoption-rejected") {
+          if (rejectAdoption) {
             replyOptions.turnAdoptionLifecycle.onAdopted = async () => {
               throw rejected;
             };
@@ -306,12 +327,20 @@ it.each(["completed", "cancelled", "adoption-rejected"] as const)(
         await drain.drainOnce();
         if (outcome === "adoption-rejected") {
           await dispatched.promise;
+          await released;
+          await drain.waitForIdle();
           expect(runtime.runTurn).not.toHaveBeenCalled();
-          expect(dispatcher.sendFinalReply).toHaveBeenCalledWith(
-            expect.objectContaining({
-              isError: true,
-              text: expect.stringContaining(rejected.message),
-            }),
+          expect(fallback).not.toHaveBeenCalled();
+          expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
+          expect(await queue.listPending()).toMatchObject([{ id: "long-acp-turn", attempts: 1 }]);
+          rejectAdoption = false;
+          await vi.advanceTimersByTimeAsync(1);
+          expect(await drain.drainOnce()).toEqual({ started: 1 });
+          await started.promise;
+          release.resolve();
+          await drain.waitForIdle();
+          expect(dispatcher.sendFinalReply).toHaveBeenCalledExactlyOnceWith(
+            expect.objectContaining({ text: "Long task completed." }),
           );
         } else {
           await Promise.race([
@@ -338,7 +367,7 @@ it.each(["completed", "cancelled", "adoption-rejected"] as const)(
           }
         }
         await drain.waitForIdle();
-        expect(runTurn).toHaveBeenCalledOnce();
+        expect(runtime.runTurn).toHaveBeenCalledOnce();
         expect(await queue.listPending()).toEqual([]);
         expect((await queue.enqueue("long-acp-turn", { text: "duplicate" })).kind).toBe(
           "completed",

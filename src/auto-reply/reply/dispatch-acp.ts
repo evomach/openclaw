@@ -650,7 +650,7 @@ export async function tryDispatchAcpReplyCore(
       ...(params.abortSignal ? { signal: params.abortSignal } : {}),
       onBeforePrompt: async () => {
         await input.withCurrent(() => {});
-        await adoptInput?.();
+        await adoptInput?.adopt();
         await assertPreparedConversationBindingRouteCurrent(params.ctx);
         await input.withCurrent(() => {
           if (getAdmittedRunDelegatedAuthority(turnAdmission) === undefined) {
@@ -724,6 +724,7 @@ export async function tryDispatchAcpReplyCore(
     emitAuditTerminal();
     return result;
   } catch (err) {
+    adoptInput?.assertCurrent();
     const acpError = toAcpRuntimeError({
       error: err,
       fallbackCode: "ACP_TURN_FAILED",
