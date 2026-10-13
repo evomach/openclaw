@@ -160,6 +160,7 @@ export function readAuthProfileRowsReadOnly(
   databasePath: string,
   schema?: SqliteAuthSchema,
   expectedIdentity?: string,
+  retainReader = true,
 ): AuthProfileRowRead {
   const acquired = acquireAuthProfileReadDatabase(databasePath, schema, expectedIdentity);
   if (acquired.status !== "readable") {
@@ -174,6 +175,10 @@ export function readAuthProfileRowsReadOnly(
   } catch {
     closeAuthProfileReadDatabase(databasePath);
     return { store: { status: "unreadable" }, state: { status: "unreadable" }, cacheable: false };
+  } finally {
+    if (!retainReader) {
+      closeAuthProfileReadDatabase(databasePath);
+    }
   }
 }
 

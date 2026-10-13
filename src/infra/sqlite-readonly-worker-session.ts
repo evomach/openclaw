@@ -356,6 +356,8 @@ export function createSqliteReadOnlyWorkerSession(
                       ...(options.mode === "operation"
                         ? { command: serialize(options.command).toString("base64") }
                         : {
+                            retainReader:
+                              options.source === "canonical" && !options.artifactPreserving,
                             schema:
                               options.source === "canonical" && !options.artifactPreserving
                                 ? captureSqliteAuthSchema(pathname, options.expectedIdentity)

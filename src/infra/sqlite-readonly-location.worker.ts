@@ -343,6 +343,7 @@ function runSession(): void {
           pathname,
           readSqliteAuthSchema(read.schema),
           expectedIdentity,
+          read.retainReader === true,
         );
         if (read.artifactPreserving === true) {
           rows.cacheable = false;

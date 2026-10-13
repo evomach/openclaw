@@ -27,7 +27,11 @@ it("keeps the auth reader alive across committed writes until owner disposal", (
       INSERT INTO auth_profile_store VALUES ('primary', '{"version":1,"profiles":{}}');
       INSERT INTO auth_profile_state VALUES ('primary', '{"lastGood":{}}');
     `);
-    const acquired = acquireAuthProfileReadDatabase(databasePath);
+    const acquired = acquireAuthProfileReadDatabase(
+      databasePath,
+      undefined,
+      readDatabasePathIdentitySync(databasePath).key,
+    );
     expect(acquired.status).toBe("readable");
     if (acquired.status !== "readable") {
       throw new Error("Auth reader unavailable");
