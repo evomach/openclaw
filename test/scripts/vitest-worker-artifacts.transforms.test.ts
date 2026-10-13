@@ -124,14 +124,15 @@ describe("fresh compiled subprocess invocation", { concurrent: false }, () => {
               // The inner owner may already have removed a joined compiler's generation.
               const manifests = (() => {
                 try {
-                  return controlled.read().map(({ directory: generation, ...receipt }) => ({
-                    ...receipt,
-                    generation: path.basename(generation),
-                    manifest:
-                      path.dirname(generation) === path.join(root, ".artifacts", "vitest-workers")
-                        ? readCompilerEvidence(path.join(generation, "manifest.json"))
-                        : { readError: "outside-worker-root" },
-                  }));
+                  return controlled.read().map(({ directory: generation, ...receipt }) =>
+                    Object.assign(receipt, {
+                      generation: path.basename(generation),
+                      manifest:
+                        path.dirname(generation) === path.join(root, ".artifacts", "vitest-workers")
+                          ? readCompilerEvidence(path.join(generation, "manifest.json"))
+                          : { readError: "outside-worker-root" },
+                    }),
+                  );
                 } catch (error) {
                   return { readError: (error as NodeJS.ErrnoException).code ?? "invalid-receipt" };
                 }
@@ -228,7 +229,9 @@ describe("fresh compiled subprocess invocation", { concurrent: false }, () => {
             new Set(compilers.map(({ pid, processStartTime }) => `${pid}:${processStartTime}`))
               .size,
           ).toBe(2);
-          expect(new Set(compilers.map(({ directory }) => path.resolve(directory)))).toEqual(
+          expect(
+            new Set(compilers.map(({ directory: generation }) => path.resolve(generation))),
+          ).toEqual(
             new Set(
               [...generations].map((generation) =>
                 path.resolve(fileURLToPath(new URL("../../", generation))),
