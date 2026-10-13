@@ -1,5 +1,14 @@
-import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import {
+  spawn,
+  type ChildProcess,
+  type ChildProcessByStdio,
+  type SpawnOptions,
+  type SpawnOptionsWithStdioTuple,
+  type StdioNull,
+  type StdioPipe,
+} from "node:child_process";
 import fs from "node:fs";
+import type { Readable, Writable } from "node:stream";
 import { readChildRuntimeViability } from "../infra/child-runtime-viability.js";
 import { parseBooleanValue } from "../utils/boolean.js";
 
@@ -76,6 +85,16 @@ function raiseChildOomScore(pid: number | undefined): void {
 export function spawnOomScoreAdjusted(
   command: string,
   args: readonly string[],
+  options: SpawnOptionsWithStdioTuple<StdioNull | StdioPipe, StdioPipe, StdioPipe>,
+): ChildProcessByStdio<Writable | null, Readable, Readable>;
+export function spawnOomScoreAdjusted(
+  command: string,
+  args: readonly string[],
+  options: SpawnOptions,
+): ChildProcess;
+export function spawnOomScoreAdjusted(
+  command: string,
+  args: readonly string[],
   options: SpawnOptions,
 ): ChildProcess {
   const child = spawn(command, args, options);
@@ -90,11 +109,9 @@ function shouldAdjustChildOomScore(options: OomWrapOptions | undefined): boolean
   if (platform !== "linux") {
     return false;
   }
-  const env = options?.env ?? process.env;
-  if (parseBooleanValue(env[CHILD_OOM_SCORE_ADJ_ENV_KEY]) === false) {
-    return false;
-  }
-  return true;
+  const value =
+    options?.env?.[CHILD_OOM_SCORE_ADJ_ENV_KEY] ?? process.env[CHILD_OOM_SCORE_ADJ_ENV_KEY];
+  return parseBooleanValue(value) !== false;
 }
 
 function isWrapped(command: string, args: readonly string[]): boolean {

@@ -86,6 +86,24 @@ describe("prepareOomScoreAdjustedSpawn", () => {
     expect(prepared).not.toHaveProperty("afterSpawn");
   });
 
+  it("inherits the parent opt-out through sanitized child environments unless explicitly overridden", () => {
+    vi.stubEnv("OPENCLAW_CHILD_OOM_SCORE_ADJ", "0");
+    try {
+      const options = { ...linux, argv0: "/opt/shims/claude" };
+      expect(prepareOomScoreAdjustedSpawn("/usr/bin/node", [], options)).not.toHaveProperty(
+        "afterSpawn",
+      );
+      expect(
+        prepareOomScoreAdjustedSpawn("/usr/bin/node", [], {
+          ...options,
+          env: { OPENCLAW_CHILD_OOM_SCORE_ADJ: "1" },
+        }),
+      ).toHaveProperty("afterSpawn");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("does not double-wrap an adjusted command", () => {
     expect(
       prepareOomScoreAdjustedSpawn("/bin/sh", ["-c", wrapScript, "/usr/bin/node", "run.js"], {

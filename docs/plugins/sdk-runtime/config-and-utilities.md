@@ -110,7 +110,8 @@ subpath with native `spawn` options. On Linux it raises the child's
 preferentially kills the child. This preserves custom `argv0`, the environment,
 and native launch errors. There is a brief window before the score write;
 descendants created in that window can retain the inherited score. The Gateway's
-score is never changed. `OPENCLAW_CHILD_OOM_SCORE_ADJ=0` disables the policy;
+score is never changed. `OPENCLAW_CHILD_OOM_SCORE_ADJ=0` disables the policy,
+including for sanitized child environments; an explicit child value overrides the parent.
 explicit `shell` launches remain caller-owned. Lower-level users of
 `prepareOomScoreAdjustedSpawn` must call its optional `afterSpawn(child.pid)`
 immediately after spawning to apply the custom-`argv0` adjustment.
