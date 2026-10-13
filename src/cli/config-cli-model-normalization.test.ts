@@ -110,8 +110,9 @@ describe("config mutation model normalization", () => {
   );
 
   it.each([false, true])("applies provider policies with prepared metadata=%s", (prepared) => {
+    const config = catalogConfig();
     const result = normalizeConfigMutationModelRefs(
-      catalogConfig(),
+      config,
       prepared ? { pluginMetadataSnapshot: metadata } : undefined,
     );
     expect(result.models?.providers?.custom?.models.map((model) => model.id)).toEqual([
@@ -121,11 +122,37 @@ describe("config mutation model normalization", () => {
     expect(loadPluginMetadataSnapshot).toHaveBeenCalledTimes(prepared ? 0 : 1);
   });
 
+  it.each(["single", "merged"] as const)(
+    "keeps %s workspace metadata out of global model normalization",
+    (scope) => {
+      const scopedMetadata = {
+        ...metadata,
+        index: {
+          ...metadata.index,
+          ...(scope === "single" ? { workspaceDir: "/workspace/old" } : {}),
+          plugins: metadata.index.plugins.map((plugin) => ({
+            ...plugin,
+            origin: "workspace" as const,
+          })),
+        },
+      };
+      const config = { ...catalogConfig(), agents: { defaults: { workspace: "/workspace/new" } } };
+      normalizeConfigMutationModelRefs(config, {
+        pluginMetadataSnapshot: scopedMetadata,
+      });
+      expect(loadPluginMetadataSnapshot).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(loadPluginMetadataSnapshot).mock.calls[0]?.[0].config).toBe(config);
+    },
+  );
+
   it("reloads policies when plugin discovery inputs change", () => {
     vi.mocked(isPluginMetadataSnapshotCompatible).mockReturnValue(false);
     const config = { ...catalogConfig(), plugins: { load: { paths: ["/new-plugin-root"] } } };
     const env = { OPENCLAW_STATE_DIR: "/isolated-state" };
-    normalizeConfigMutationModelRefs(config, { pluginMetadataSnapshot: metadata, env });
+    normalizeConfigMutationModelRefs(config, {
+      pluginMetadataSnapshot: metadata,
+      env,
+    });
     expect(loadPluginMetadataSnapshot).toHaveBeenCalledTimes(1);
     const [loaded] = vi.mocked(loadPluginMetadataSnapshot).mock.calls;
     expect(loaded?.[0].config).toBe(config);

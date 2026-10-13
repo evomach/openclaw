@@ -2,6 +2,7 @@ import { expectDefined } from "@openclaw/normalization-core";
 import { normalizeSubmittedConfigModelRefs } from "../config/model-input-normalization.js";
 import { normalizeAgentModelRefForConfig } from "../config/model-input.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { hasInstalledPluginIndexWorkspaceScopeMismatch } from "../plugins/installed-plugin-index.js";
 import {
   isPluginMetadataSnapshotCompatible,
   loadPluginMetadataSnapshot,
@@ -11,18 +12,22 @@ import type { PathSegment } from "./config-cli-path.js";
 
 export function normalizeConfigMutationModelRefs(
   cfg: OpenClawConfig,
-  options: { pluginMetadataSnapshot?: PluginMetadataSnapshot; env?: NodeJS.ProcessEnv } = {},
+  options: {
+    pluginMetadataSnapshot?: PluginMetadataSnapshot;
+    env?: NodeJS.ProcessEnv;
+  } = {},
 ): OpenClawConfig {
   return normalizeSubmittedConfigModelRefs(cfg, () => {
     const env = options.env ?? process.env;
     const prepared = options.pluginMetadataSnapshot;
     const pluginMetadata =
       prepared &&
+      // Preserve global normalization policies; config reads can include workspace plugins.
+      !hasInstalledPluginIndexWorkspaceScopeMismatch(prepared.index, undefined) &&
       isPluginMetadataSnapshotCompatible({
         snapshot: prepared,
         config: cfg,
         env,
-        workspaceDir: prepared.workspaceDir,
       })
         ? prepared
         : loadPluginMetadataSnapshot({ config: cfg, env });
