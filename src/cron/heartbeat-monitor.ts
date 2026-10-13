@@ -8,7 +8,7 @@ import {
   resolveHeartbeatPhaseMs,
   resolveHeartbeatSchedulerSeedAsync,
 } from "../infra/heartbeat-schedule.js";
-import { isCronAgentDeletionBlockedError } from "./agent-availability.js";
+import { isCronAgentLifecycleDeferredError } from "./agent-availability.js";
 import type { CronService } from "./service.js";
 import { partitionSystemMonitors } from "./system-monitor-jobs.js";
 import { HEARTBEAT_DECLARATION_PREFIX } from "./system-owned-declaration.js";
@@ -216,7 +216,9 @@ export async function reconcileHeartbeatMonitorJobs(
     !ok &&
     failures.every(
       ({ change, error }) =>
-        change !== undefined && change.kind !== "remove" && isCronAgentDeletionBlockedError(error),
+        change !== undefined &&
+        change.kind !== "remove" &&
+        isCronAgentLifecycleDeferredError(error),
     );
   return { ok, ...(lifecycleDeferred ? { lifecycleDeferred: true } : {}) };
 }

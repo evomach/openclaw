@@ -251,7 +251,7 @@ export function registerGatewayCronSystemJobTests({
         await expect(
           addAgentTurnJob(state, "retired-owner", "must not run", { agentId: "retiring" }),
         ).rejects.toMatchObject({
-          name: "CronAgentDeletionBlockedError",
+          name: "CronAgentLifecycleDeferredError",
           message: "cron job agent is unavailable: retiring",
         });
 

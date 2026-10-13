@@ -4,17 +4,24 @@ import { readAgentDatabaseAdmissionRefusal } from "../state/agent-database-admis
 type CronAgentAvailabilityFacts = { deletionBlocked: boolean };
 export type CronAgentAvailability = (agentId: string, facts: CronAgentAvailabilityFacts) => boolean;
 
-/** Deletion owns this refusal; monitor reconciliation may retry after rollback. */
-export class CronAgentDeletionBlockedError extends Error {
-  constructor(agentId: string) {
-    super(describeUnavailableCronAgent(agentId));
-    this.name = "CronAgentDeletionBlockedError";
+/** Agent lifecycle owns this refusal; monitor reconciliation may retry once admitted. */
+export class CronAgentLifecycleDeferredError extends Error {
+  constructor(agentId: string, env?: NodeJS.ProcessEnv) {
+    super(describeUnavailableCronAgent(agentId, env));
+    this.name = "CronAgentLifecycleDeferredError";
   }
 }
 
-export function isCronAgentDeletionBlockedError(error: unknown): boolean {
+export function isCronAgentLifecycleDeferredError(error: unknown): boolean {
   // The SQLite worker transports the error name without its JavaScript prototype.
-  return error instanceof Error && error.name === "CronAgentDeletionBlockedError";
+  return error instanceof Error && error.name === "CronAgentLifecycleDeferredError";
+}
+
+export function createUnavailableCronAgentError(agentId: string, env?: NodeJS.ProcessEnv): Error {
+  return readAgentDatabaseAdmissionRefusal(agentId, { env })?.code ===
+    "agent-database-inspection-pending"
+    ? new CronAgentLifecycleDeferredError(agentId, env)
+    : new Error(describeUnavailableCronAgent(agentId, env));
 }
 
 export function describeUnavailableCronAgent(agentId: string, env?: NodeJS.ProcessEnv): string {

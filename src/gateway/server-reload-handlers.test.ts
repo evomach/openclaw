@@ -92,6 +92,11 @@ import {
   getActiveSecretsRuntimeSnapshotRevision,
   type PreparedSecretsRuntimeSnapshot,
 } from "../secrets/runtime.js";
+import {
+  createAgentDatabaseInspectionRefusal,
+  preparePendingAgentDatabase,
+  recordAgentDatabaseAdmissions,
+} from "../state/agent-database-admission.js";
 import { closeOpenClawAgentDatabasesAsync } from "../state/openclaw-agent-db.js";
 import { createChannelTestPluginBase, createTestRegistry } from "../test-utils/channel-plugins.js";
 import {
@@ -2039,12 +2044,13 @@ describe("gateway hot reload model state", () => {
     },
   );
 
-  it.each(["startup", "rejected", "noop"] as const)(
-    "keeps monitor retries aligned with accepted config during %s",
+  it.each(["startup", "inspection-failed", "rejected", "noop"] as const)(
+    "keeps monitor writes aligned with accepted config during %s",
     async (successor) => {
       const clock = createGatewaySchedulerClock(Date.now());
       const scheduler = createTestGatewayScheduler(clock.clock);
       const fixtureDir = autoCleanupTempDirs.make("openclaw-monitor-publication-");
+      vi.stubEnv("OPENCLAW_STATE_DIR", fixtureDir);
       const initialConfig = {
         agents: {
           entries: {
@@ -2074,9 +2080,14 @@ describe("gateway hot reload model state", () => {
         broadcast: vi.fn(),
       });
       cronState.cron.pauseScheduling();
-      const publicationFailure = createMonitorPublicationFailure(
-        successor === "startup" ? "INSERT" : "UPDATE",
-      );
+      const publicationFailure = createMonitorPublicationFailure();
+      const admissionRefused = successor === "startup" || successor === "inspection-failed";
+      const startupRefusal = createAgentDatabaseInspectionRefusal({
+        agentId: "second",
+        paths: [],
+        pending: successor === "startup",
+        reason: "Agent second has not completed startup inspection and preparation.",
+      });
       let state = createDefaultGatewayReloadState({ cronState });
       const requestRecoveryRestart = vi.fn(() => ({ status: "emitted" as const }));
       const handlers = createGatewayReloadHandlers({
@@ -2123,11 +2134,12 @@ describe("gateway hot reload model state", () => {
           .toSorted((left, right) => (left.agentId ?? "").localeCompare(right.agentId ?? ""))
           .map((job) => (job.schedule.kind === "every" ? job.schedule.everyMs : undefined));
       try {
-        // Startup maintenance has not created the monitors yet in the startup case.
-        if (successor !== "startup") {
+        if (admissionRefused) {
+          recordAgentDatabaseAdmissions([startupRefusal]);
+        } else {
           await expect(cronState.reconcileSystemJobs()).resolves.toBe("converged");
+          publicationFailure.install();
         }
-        publicationFailure.install();
         const result = await managed
           .onHotReload(
             buildGatewayReloadPlan(["agents.entries.first.heartbeat.every"]),
@@ -2137,13 +2149,19 @@ describe("gateway hot reload model state", () => {
           )
           .catch((error: unknown) => error);
         expect(await readIntervals()).toEqual(
-          successor === "startup" ? [7_200_000] : [7_200_000, 3_600_000],
+          admissionRefused ? [7_200_000] : [7_200_000, 3_600_000],
         );
-        expect(result).toBe("applied");
-        expect(requestRecoveryRestart).not.toHaveBeenCalled();
+        expect(result).toBe(successor === "startup" ? "applied" : "applied-restart-required");
         expect(markRuntimeCommitted).toHaveBeenCalledOnce();
         expect(getActiveSecretsRuntimeSnapshot()?.config).toEqual(nextConfig);
-        publicationFailure.remove();
+        if (successor === "startup") {
+          expect(requestRecoveryRestart).not.toHaveBeenCalled();
+          await preparePendingAgentDatabase(startupRefusal, { assertCurrent() {} }, async () => {});
+        } else if (successor === "inspection-failed") {
+          recordAgentDatabaseAdmissions([]);
+        } else {
+          publicationFailure.remove();
+        }
         const successorConfig = { ...nextConfig, logging: { level: "debug" as const } };
         if (successor === "rejected") {
           await expect(
@@ -2166,9 +2184,12 @@ describe("gateway hot reload model state", () => {
         }
         await clock.advanceBy(30_000);
         expect(await readIntervals()).toEqual([7_200_000, 7_200_000]);
-        expect(requestRecoveryRestart).not.toHaveBeenCalled();
+        if (successor === "startup") {
+          expect(requestRecoveryRestart).not.toHaveBeenCalled();
+        }
       } finally {
         try {
+          recordAgentDatabaseAdmissions([]);
           publicationFailure.dispose();
         } finally {
           handlers.stopRestartRetries();
@@ -2178,28 +2199,6 @@ describe("gateway hot reload model state", () => {
       }
     },
   );
-
-  it("retains restart recovery when cron reconciliation rejects without scheduling a retry", async () => {
-    const requestRecoveryRestart = vi.fn(() => ({ status: "emitted" as const }));
-    const handlers = createReloadHandlersForTest(
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      requestRecoveryRestart,
-    );
-    handlers.reconcileSystemJobs.mockRejectedValueOnce(new Error("cron reconciliation failed"));
-    try {
-      await expect(
-        handlers.applyHotReload(buildGatewayReloadPlan(["agents.defaults.heartbeat.every"]), {
-          agents: { defaults: { heartbeat: { every: "2h" } } },
-        }),
-      ).resolves.toBe("applied-restart-required");
-      expect(requestRecoveryRestart).toHaveBeenCalledOnce();
-    } finally {
-      handlers.stopRestartRetries();
-    }
-  });
 
   it("rejects an ownerless heartbeat update failure before runtime commit", async () => {
     const publish = vi.fn(async (commit: () => Promise<void>) => await commit());

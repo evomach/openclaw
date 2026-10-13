@@ -2,7 +2,7 @@
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { resolveOpenClawStateSqlitePath } from "../../state/openclaw-state-db.paths.js";
 import { captureOpenClawStateWorkerContext } from "../../state/openclaw-state-worker-context.js";
-import { describeUnavailableCronAgent } from "../agent-availability.js";
+import { createUnavailableCronAgentError } from "../agent-availability.js";
 import { captureCronMutationCommit } from "../mutation-completion.js";
 import { normalizeCronJobInput } from "../normalize.js";
 import { getInvalidPersistedCronJobReason } from "../persisted-shape.js";
@@ -401,7 +401,7 @@ export async function persistCronJobMutation(params: {
       params.agentId !== undefined &&
       state.deps.isAgentAvailable?.(params.agentId, { deletionBlocked: false }) === false
     ) {
-      throw new Error(describeUnavailableCronAgent(params.agentId));
+      throw createUnavailableCronAgentError(params.agentId, source.context.environment);
     }
   };
   await runCronRuntimeMutation({
