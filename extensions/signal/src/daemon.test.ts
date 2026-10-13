@@ -19,6 +19,7 @@ vi.mock("openclaw/plugin-sdk/security-runtime", async (importOriginal) => {
   };
 });
 
+// mock-isolation: Keep process owners and worker runtimes out of this daemon fixture.
 vi.mock("openclaw/plugin-sdk/process-runtime", () => ({ spawnOomScoreAdjusted: spawnMock }));
 
 function createMockChild() {

@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   cleanupTailscaleExposureRoute: vi.fn(),
 }));
 
+// mock-isolation: Replace the SDK spawn boundary without loading its process owners and workers.
 vi.mock("openclaw/plugin-sdk/process-runtime", async () => {
   const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
   mocks.realSpawn = actual.spawn;
