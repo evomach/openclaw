@@ -67,6 +67,13 @@ If it must cancel before repair starts, it reverses its own stop while its nativ
 service custody remains valid. Normal post-repair restoration still requires
 current update admission.
 
+Before repairs, Doctor captures the original state under exclusive maintenance
+ownership. It checks the update ledger at the start and end of that capture,
+instead of rescanning the entire shared database for each plugin file. Lock,
+cancellation, and requester-permission checks remain active throughout. A changed
+update admission stops repair with recovery instructions; Doctor does not retry
+the capture indefinitely.
+
 During service inspection, Doctor reuses already recorded update continuation
 receipts after rechecking live update ownership. This avoids repeating full
 database integrity scans for unchanged receipts within the service manager's

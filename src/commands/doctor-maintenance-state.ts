@@ -49,6 +49,7 @@ export async function createDoctorMaintenanceState(options: {
       }
     : env;
   let captureAdmitted = false;
+  let capturingOriginal = false;
   let liveAuthorityReadsAdmitted = false;
   const capture = createUpdateDoctorDatabaseWriteCapture(params.databaseGenerations, {
     env: selectedEnv,
@@ -150,7 +151,11 @@ export async function createDoctorMaintenanceState(options: {
         assertOwnerCurrent: (access) => {
           acquired.assertCurrent(() => {
             options.assertCurrent?.();
-            options.assertReadCurrent();
+            // The exclusive owner keeps the ledger stable during read-only capture.
+            // Recheck it at the phase boundary, not once per captured file.
+            if (!capturingOriginal) {
+              options.assertReadCurrent();
+            }
           }, access);
         },
       });
@@ -228,9 +233,14 @@ export async function createDoctorMaintenanceState(options: {
     async prepareRepair() {
       const beforeStateMutation = params.beforeStateMutation;
       if (beforeStateMutation) {
-        await resources!.run(() =>
-          beforeStateMutation({ env: selectedEnv, signal: options.signal }),
-        );
+        await resources!.run(async () => {
+          capturingOriginal = true;
+          try {
+            await beforeStateMutation({ env: selectedEnv, signal: options.signal });
+          } finally {
+            capturingOriginal = false;
+          }
+        });
         resources!.assertAdmission();
       }
       resources!.run(() =>

@@ -5,6 +5,7 @@ import type { maybeStopManagedServiceBeforeMutableUpdate } from "../cli/update-c
 import { acquireGatewayLock } from "../infra/gateway-lock.js";
 import * as snapshots from "../infra/sqlite-snapshot-source.js";
 import { listUpdateRuns } from "../infra/update-run-reader.js";
+import { getOpenClawDatabaseMaintenanceScope } from "../state/openclaw-state-db-async-lifecycle.js";
 import { closeOpenClawStateDatabaseAsync } from "../state/openclaw-state-db-cache.js";
 import { openDoctorStateSchemaReadAdmission } from "../state/openclaw-state-db-doctor-schema.js";
 import { resolveDoctorUpdateAdmission } from "./doctor-maintenance-admission.js";
@@ -35,7 +36,7 @@ vi.mock("./doctor-maintenance-stale-service.js", async (original) => ({
 const fixture = setupDoctorAdmissionFixture();
 
 it.each([true, false])(
-  "keeps Doctor continuation with its repair scope (cached writer: %s)",
+  "bounds original-capture admission and keeps continuation with its repair scope (cached writer: %s)",
   async (keepWriter) => {
     const { env, family, assertIsolation } = fixture(true);
     vi.stubEnv("OPENCLAW_STATE_DIR", env.OPENCLAW_STATE_DIR);
@@ -94,6 +95,13 @@ it.each([true, false])(
             const original = family();
             listUpdateRuns({}, { env }, openDoctorStateSchemaReadAdmission);
             expect(family()).toEqual(original);
+            hashes.mockClear();
+            const scope = getOpenClawDatabaseMaintenanceScope()!;
+            for (let file = 0; file < 20; file++) {
+              await Promise.resolve();
+              scope.assertOwnerCurrent();
+            }
+            expect(hashes).not.toHaveBeenCalled();
           },
         });
         expect(maintenance).toBeDefined();
