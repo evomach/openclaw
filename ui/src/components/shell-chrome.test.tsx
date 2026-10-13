@@ -4,6 +4,7 @@ import type { ControlUiEnvironment } from "../../../src/gateway/control-ui-boots
 import { cleanupSolid, mountSolid } from "../test-helpers/mount-solid.ts";
 import { AppTopbar } from "./app-topbar.ts";
 import { MacosTitlebarControls } from "./macos-titlebar-controls.runtime.ts";
+import { renderNewSessionLink } from "./new-session-link.ts";
 
 afterEach(() => {
   cleanupSolid();
@@ -14,12 +15,15 @@ describe("Solid shell chrome", () => {
   it("updates the topbar's environment and drawer state while retaining its action target", () => {
     const [environment, setEnvironment] = createSignal<ControlUiEnvironment | null>(null);
     const [open, setOpen] = createSignal(false);
+    const [newSessionAction, setNewSessionAction] = createSignal<unknown>(undefined);
     const toggle = vi.fn();
     const palette = vi.fn();
+    const openSession = vi.fn();
     const view = mountSolid(() => (
       <AppTopbar
         environment={environment()}
         navDrawerOpen={open()}
+        newSessionAction={newSessionAction()}
         resourceBasePath="/control"
         onToggleDrawer={toggle}
         onOpenPalette={palette}
@@ -36,8 +40,31 @@ describe("Solid shell chrome", () => {
     expect(drawer.getAttribute("aria-expanded")).toBe("false");
     drawer.click();
     expect(toggle).toHaveBeenCalledWith(drawer);
-    view.container.querySelector<HTMLButtonElement>(".topbar-search")!.click();
+    const search = view.container.querySelector<HTMLButtonElement>(".topbar-search")!;
+    search.click();
     expect(palette).toHaveBeenCalledOnce();
+
+    setNewSessionAction(
+      renderNewSessionLink({
+        basePath: "/control",
+        agentId: "writer",
+        className: "header-new-session",
+        label: "New conversation",
+        onOpen: openSession,
+      }),
+    );
+    flush();
+    const newSession = view.container.querySelector<HTMLAnchorElement>(
+      ".topnav-shell__actions .header-new-session",
+    )!;
+    expect(newSession.getAttribute("href")).toBe("/control/new?agent=writer");
+    newSession.click();
+    expect(openSession).toHaveBeenCalledWith("writer", undefined);
+
+    setNewSessionAction(undefined);
+    flush();
+    expect(view.container.querySelector(".header-new-session")).toBeNull();
+    expect(view.container.querySelector(".topbar-search")).toBe(search);
 
     setEnvironment({ label: "edge", color: "amber" });
     setOpen(true);

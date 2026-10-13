@@ -356,10 +356,12 @@ These are intentionally guarded by the `ci-workflow-guards`,
   historical 16/32-class runs also differed in compiler optimization. See
   `docs/ci/routing-costs.md` for sizing evidence. No jobs, registrations,
   permissions, compiler checks, or hosted eligibility are added.
-  The package-boundary row has a 30-minute whole-job budget: three hosted
+  The package-boundary row has a 40-minute whole-job budget: three hosted
   four-CPU attempts hit the former 20-minute limit, with about 19 minutes in
   SDK preparation and 126 compiles before final validation/canary/cleanup.
   One completed both compile and canary but still exceeded the job deadline.
+  Two hosted release validations then passed both checks (128 plugins) and
+  were cancelled at the former 30-minute limit.
   Compiler concurrency, complete inventory, receipt guards, canary, and routing
   remain unchanged.
 - The Plugin SDK API diff row also has a 30-minute whole-job budget. Two hosted
@@ -588,12 +590,14 @@ These are intentionally guarded by the `ci-workflow-guards`,
   elapsed-time, actual memory and cleanup proof; requested labels are not capacity.
 - The whole Blacksmith agent-support group requests `blacksmith-32vcpu-ubuntu-2404`.
   Its file inventory and resource-derived worker policy remain unchanged.
-- Precisely selected serial CLI-only jobs use the 16-class when every group has
-  one or two explicit files and the existing two-worker fallback, without build,
-  dist, memory, or large-runner anchors. Apply capacity after packing; preserve
-  inventories, runtime selection, timing identities, and process boundaries.
-  Full CLI families retain their planned capacity. RunsOn inherits the hybrid
-  choice for retained Blacksmith CLI jobs.
+- Precisely selected serial CLI and Gateway client jobs use the 16-class when
+  every group belongs to either family, has one or two explicit files, and keeps
+  its two-worker fallback, without build, dist, memory, or large-runner anchors.
+  Gateway client groups must pair `agentic-gateway-core-2` with
+  `vitest.gateway-client.config.ts`; other Gateway owners retain planned capacity.
+  Apply capacity after packing; preserve inventories, runtime selection, timing
+  identities, and process boundaries. Full families retain their planned capacity.
+  RunsOn inherits the hybrid choice for these retained Blacksmith jobs.
 - Source-only serial Blacksmith tooling bins use the 16-class after packing,
   retaining logical classes, names, file inventories, and two-worker pins.
   Keep the 32-class for compiler/artifact capacity files, explicit runner or
@@ -690,6 +694,8 @@ These are intentionally guarded by the `ci-workflow-guards`,
   same rows: each validates the complete graph boundary and intersects selected
   consumers with its original stripe. Empty intersections stay empty; ambiguous
   selection falls back to every canonical graph across those same stripes.
+  Check existence only for compiler inputs: deleted Markdown and UI CSS paths
+  do not widen accompanying code changes; deleted compiler inputs retain full coverage.
   Frozen targets retain two paired rows for stripes 1+2 and 3+4 sequentially,
   with stripe 5 in the central row. Keep at most two compiler children per
   stripe and one builder per child. A failing stripe stops its row; other

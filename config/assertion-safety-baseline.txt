@@ -66,7 +66,7 @@ extensions/browser/src/browser/pw-tools-core.interactions.navigation.ts	1
 extensions/browser/src/browser/pw-tools-core.snapshot.ts	1
 extensions/browser/src/browser/routes/agent.act.normalize.ts	1
 extensions/browser/src/browser/routes/agent.act.shared.ts	1
-extensions/browser/src/browser/routes/tabs.ts	6
+extensions/browser/src/browser/routes/tabs.ts	5
 extensions/browser/src/browser/server-context.remote-tab-ops.harness.ts	2
 extensions/browser/src/browser/server-context.tab-ops.ts	2
 extensions/browser/src/browser/system-chrome-cookies.ts	1
@@ -194,7 +194,6 @@ extensions/device-pair/index.ts	6
 extensions/device-pair/notify.ts	1
 extensions/diagnostics-otel/src/service-exporter.ts	1
 extensions/diagnostics-otel/src/service-logs.ts	8
-extensions/diagnostics-otel/src/service-propagation.ts	2
 extensions/diagnostics-otel/src/service-trace-context.ts	1
 extensions/diagnostics-otel/src/service.ts	1
 extensions/diffs/src/config.ts	2
