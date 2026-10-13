@@ -62,9 +62,8 @@ function hasRegisteredOAuthRedirect(redirectUris: string[], redirectUrl: string)
   ) {
     return false;
   }
-  // RFC 8252 permits a portless loopback registration for a port-bearing callback.
-  loopback.port = "";
-  return redirectUris.includes(loopback.href);
+  // RFC 8252 exempts the port, not other callback bytes changed by URL serialization.
+  return redirectUris.includes(redirectUrl.replace(/^(http:\/\/[^/?#]+):\d+(?=[/?#]|$)/iu, "$1"));
 }
 
 /** Bind OAuth network work to the lease that fences its persisted side effects. */
