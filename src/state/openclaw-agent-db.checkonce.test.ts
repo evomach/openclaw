@@ -132,7 +132,7 @@ it.each(["drop", "recreate"] as const)(
   },
 );
 
-it("reuses live agent admission and revalidates after writer idle retirement", async () => {
+it("reuses live agent admission and its seal after writer idle retirement", async () => {
   await withOpenClawTestState({ scenario: "minimal" }, async ({ env }) => {
     const options = { agentId: "main", env };
     const shared = openOpenClawStateDatabase({ env });
@@ -158,12 +158,11 @@ it("reuses live agent admission and revalidates after writer idle retirement", a
         expect(validationStatements(observation.queries)).toEqual([]);
         vi.advanceTimersByTime(SQLITE_IDLE_HANDLE_TTL_MS);
         expect(firstNative.isOpen).toBe(false);
+        expect(readSqliteDatabaseCleanClose(first.path)).toBe(true);
         const reopened = openOpenClawAgentDatabase(options);
         expect(reopened.db === firstNative).toBe(false);
         expect(reopened.db.isOpen).toBe(true);
-        expect(
-          observation.queries.filter((sql) => /\bFROM main\.sqlite_schema\b/iu.test(sql)),
-        ).toHaveLength(1);
+        expect(validationStatements(observation.queries)).toEqual([]);
       } finally {
         observation.restore();
       }
