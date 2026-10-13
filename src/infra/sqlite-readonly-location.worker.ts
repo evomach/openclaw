@@ -339,7 +339,11 @@ function runSession(): void {
           return;
         }
         assertExistingDatabaseIdentity(pathname, expectedIdentity);
-        const rows = readAuthProfileRowsReadOnly(pathname, readSqliteAuthSchema(read.schema));
+        const rows = readAuthProfileRowsReadOnly(
+          pathname,
+          readSqliteAuthSchema(read.schema),
+          expectedIdentity,
+        );
         if (read.artifactPreserving === true) {
           rows.cacheable = false;
         }
