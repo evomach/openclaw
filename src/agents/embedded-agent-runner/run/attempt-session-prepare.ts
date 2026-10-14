@@ -640,6 +640,10 @@ export async function prepareEmbeddedAttemptSessionManager(input: {
         if (media?.length) {
           attachRuntimePromptMediaFacts(runtimeMessage, media);
           attempt.currentTurnMediaFacts = media;
+        } else {
+          // A text-only turn replaces the active turn: drop the previous turn's
+          // facts so a provider transcript rebuild cannot re-inject stale media.
+          attempt.currentTurnMediaFacts = undefined;
         }
         userTranscriptContextRegistry.record(runtimeMessage, message);
       }
@@ -651,6 +655,8 @@ export async function prepareEmbeddedAttemptSessionManager(input: {
       if (runtimeMessage && media?.length) {
         attachRuntimePromptMediaFacts(runtimeMessage, media);
         attempt.currentTurnMediaFacts = media;
+      } else if (runtimeMessage) {
+        attempt.currentTurnMediaFacts = undefined;
       }
       // Replay suppresses the append of a user that is already durable. Report it
       // like an adopted append so retries and fallbacks do not append it again;
