@@ -118,6 +118,7 @@ export function resolveProviderModelInput(params: {
   ) {
     return ["text", "image"];
   }
+  // SAFETY: the filter above admits only text/image/video, which is exactly the provider-side input union.
   return normalizedInput.length > 0 ? (normalizedInput as ProviderRuntimeModel["input"]) : ["text"];
 }
 

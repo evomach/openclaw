@@ -96,8 +96,10 @@ export function usesEscapedRuntimeContext(sessionVersion?: number): boolean {
  * materialization instead of being silently omitted.
  */
 function carryRuntimePromptMediaFacts<T extends object>(source: AgentMessage, copy: T): T {
+  // SAFETY: AgentMessage is read as a plain object to reach non-enumerable runtime fact symbols.
   const facts = readRuntimePromptMediaFacts(source as object);
   if (facts) {
+    // SAFETY: same plain-object read for the image-order symbol on the same source message.
     attachRuntimePromptMediaFacts(copy, facts, readRuntimePromptImageOrder(source as object));
   }
   return copy;
@@ -680,6 +682,7 @@ function normalizeUserMessagesForLlmBoundary(
       return message;
     }
     changed = true;
+    // SAFETY: spread preserves the message discriminants; only content is replaced in place.
     return carryRuntimePromptMediaFacts(message, {
       ...message,
       content: nextContent,

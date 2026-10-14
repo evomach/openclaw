@@ -577,6 +577,7 @@ async function materializePromptMediaMessages(
       // in-memory context copies can predate that projection (freshly drained or
       // queued turns). Recover the same facts instead of omitting the media.
       try {
+        // SAFETY: transcript messages are structural records for the legacy media canonicalizer.
         const canonicalized = canonicalizePersistedUserMessageMedia(message as object);
         resolvedMedia = canonicalized.changed
           ? readPersistedMediaFacts(canonicalized.message)
@@ -595,6 +596,7 @@ async function materializePromptMediaMessages(
       }
     }
     if (options.provider && resolvedMediaOrEmpty.some((fact) => isVideoMediaFact(fact))) {
+      // SAFETY: __openclaw metadata is an untyped carrier; only .media length is read for diagnostics.
       const metaMedia = (meta as { media?: unknown[] } | undefined)?.media;
       log.warn(
         `provider media facts: message=${index}/${messages.length} activeUser=${index === activeUserIndex} runtimeFacts=${runtimeMedia ? runtimeMedia.length : "none"} metaMedia=${Array.isArray(metaMedia) ? metaMedia.length : "none"} resolved=${resolvedMediaOrEmpty.length}`,
@@ -605,6 +607,7 @@ async function materializePromptMediaMessages(
       Array.isArray(asNonArrayRecord(message).media)
     ) {
       log.warn(
+        // SAFETY: the Array.isArray guard above proves media is an array; length is read for diagnostics.
         `unprojected user media facts: message=${index}/${messages.length} topLevelMedia=${(asNonArrayRecord(message).media as unknown[]).length}`,
       );
     }

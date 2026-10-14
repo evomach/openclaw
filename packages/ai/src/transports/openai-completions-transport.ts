@@ -317,7 +317,9 @@ export function streamOpenAICompletionsRequest(
     try {
       const requestContext = (await resolveProviderContext(
         context,
+        // SAFETY: provider-side options are the wire-level stream settings for this transport call.
         options as ProviderStreamOptions | undefined,
+        // SAFETY: the resolver preserves the Context shape and only widens declared input modalities.
       )) as Context;
       const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
       const directEmitReasoning = Boolean(

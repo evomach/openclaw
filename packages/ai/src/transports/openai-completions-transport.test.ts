@@ -5,7 +5,6 @@ import type { OpenAICompletionsOptions } from "../provider-options.js";
 import { PROVIDER_CONTEXT_HANDOFF } from "../provider-types.js";
 import type { Context, Model, SimpleStreamOptions } from "../types.js";
 import type { FirstStreamEventInternalOptions } from "../utils/stream-first-event-timeout.js";
-import { processCompletionsStream } from "./openai-completions-stream.js";
 import { createOpenAICompletionsTransportStreamFn } from "./openai-completions-transport.js";
 import { makeCompletionsChunk, makeCompletionsModel } from "./openai-completions.test-support.js";
 import { buildOpenAISdkRequestOptions } from "./openai-transport-params.js";

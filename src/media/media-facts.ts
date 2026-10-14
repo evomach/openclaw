@@ -59,6 +59,7 @@ export function tagRuntimePromptTurn<T extends object>(message: T, tag: string):
 }
 
 export function readRuntimePromptTurnTag(message: object): string | undefined {
+  // SAFETY: runtime prompt messages carry the tag as a non-enumerable symbol-keyed property.
   const tag = (message as Record<PropertyKey, unknown>)[RUNTIME_PROMPT_TURN_TAG];
   return typeof tag === "string" ? tag : undefined;
 }
