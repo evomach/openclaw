@@ -4,7 +4,10 @@ import { makeModel } from "./model.test-harness.js";
 
 describe("buildInlineProviderModels", () => {
   it("preserves declared video input modality for custom providers", () => {
-    const model = { ...makeModel("vision-video-model"), input: ["text", "image", "video"] };
+    const model = {
+      ...makeModel("vision-video-model"),
+      input: ["text", "image", "video"] as ("text" | "image" | "video")[],
+    };
     const [entry] = buildInlineProviderModels({
       "llm-local": {
         baseUrl: "http://127.0.0.1:5468/v1",

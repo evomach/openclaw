@@ -591,7 +591,6 @@ async function materializePromptMediaMessages(
         ? normalizeMediaFacts(options.currentTurnFacts)
         : undefined;
       if (injected?.length) {
-        resolvedMedia = injected;
         resolvedMediaOrEmpty = injected;
       }
     }

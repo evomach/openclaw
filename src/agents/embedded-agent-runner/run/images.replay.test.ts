@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type { ModelInputContent } from "@openclaw/ai/provider-types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSolidPngBuffer } from "../../../../test/helpers/image-fixtures.js";
 import { useAutoCleanupTempDirTracker } from "../../../../test/helpers/temp-dir.js";
@@ -473,7 +474,7 @@ describe("native video provider materialization from persisted facts", () => {
         workspaceDir: stateDir,
       });
       const blocks = prepared.messages.flatMap((message) =>
-        Array.isArray(message.content) ? message.content : [],
+        Array.isArray(message.content) ? (message.content as ModelInputContent[]) : [],
       );
       expect(blocks.filter((block) => block.type === "video")).toHaveLength(1);
     } finally {
@@ -525,7 +526,7 @@ describe("native video provider materialization from persisted facts", () => {
         workspaceDir: stateDir,
       });
       const blocks = prepared.messages.flatMap((message) =>
-        Array.isArray(message.content) ? message.content : [],
+        Array.isArray(message.content) ? (message.content as ModelInputContent[]) : [],
       );
       expect(blocks.filter((block) => block.type === "video")).toHaveLength(1);
       expect(
@@ -576,7 +577,7 @@ describe("native video provider materialization from persisted facts", () => {
         ] as never,
       });
       const blocks = prepared.messages.flatMap((message) =>
-        Array.isArray(message.content) ? message.content : [],
+        Array.isArray(message.content) ? (message.content as ModelInputContent[]) : [],
       );
       expect(blocks.filter((block) => block.type === "video")).toHaveLength(1);
     } finally {
@@ -627,7 +628,7 @@ describe("native video provider materialization from persisted facts", () => {
         ] as never,
       });
       const blocks = prepared.messages.flatMap((message) =>
-        Array.isArray(message.content) ? message.content : [],
+        Array.isArray(message.content) ? (message.content as ModelInputContent[]) : [],
       );
       expect(blocks.filter((block) => block.type === "video")).toHaveLength(1);
     } finally {

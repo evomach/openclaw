@@ -85,9 +85,12 @@ describe("OpenAI completions output budgets", () => {
   it("charges video parts as projected frames, not as data-URI text", () => {
     const proxyVideo = {
       ...proxy,
-      input: ["text", "image", "video"] as ("text" | "image" | "video")[],
+      // Provider-boundary fixture: the wire model carries a declared video
+      // capability at runtime (ProviderModel.input); the canonical alias here
+      // requires the same downcast the transport boundary performs.
+      input: ["text", "image", "video"] as CompletionsModel["input"],
     };
-    const context: Context = {
+    const context = {
       systemPrompt: "system",
       messages: [
         {
@@ -100,13 +103,13 @@ describe("OpenAI completions output budgets", () => {
         },
       ],
       tools: [],
-    };
+    } as unknown as Context;
     const params = request({ ...proxyVideo, contextTokens: 64_000 }, undefined, context);
     const user = params.messages.find(
       (message) => (message as { role?: string }).role === "user",
     ) as { content?: Array<{ type?: string; video_url?: { url?: string } }> };
     const videoPart = user?.content?.find((part) => part.type === "video_url");
-    expect(videoPart?.video_url?.url.startsWith("data:video/mp4;base64,")).toBe(true);
+    expect(videoPart?.video_url?.url?.startsWith("data:video/mp4;base64,")).toBe(true);
     expect(params.max_completion_tokens).toBeGreaterThan(0);
   });
 

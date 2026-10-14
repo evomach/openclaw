@@ -98,7 +98,10 @@ describe("openai completions transport", () => {
         provider: "llm-local",
         baseUrl: "http://127.0.0.1:5468/v1",
         reasoning: false,
-        input: ["text", "image", "video"],
+        // Provider-boundary fixture: declared video rides the wire model at
+        // runtime; the canonical alias requires the same downcast the
+        // transport boundary performs.
+        input: ["text", "image", "video"] as Model<"openai-completions">["input"],
         contextWindow: 262_144,
         maxTokens: 16_384,
       }),

@@ -362,7 +362,7 @@ function configuredActiveModelSupportsNativeVideo(
     return false;
   }
   const api = modelCfg.api ?? providerCfg.api;
-  return api === "openai-completions" && modelCfg.input?.includes("video") === true;
+  return api === "openai-completions" && (modelCfg.input?.includes("video") ?? false);
 }
 
 // Mirrors the openai-completions transport contract that actually forwards a
