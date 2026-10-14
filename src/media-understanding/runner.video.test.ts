@@ -30,6 +30,7 @@ vi.mock("../agents/model-auth.js", async () => {
 
 const loadModelCatalog = vi.hoisted(() => vi.fn(async () => [] as unknown[]));
 
+// mock-isolation: catalog loads are stubbed canned fixtures; real prepared-catalog files must not influence runner model selection.
 vi.mock("../agents/prepared-model-catalog.js", () => ({
   loadProviderScopedThinkingCatalog: vi.fn(async () => []),
   readPreparedModelCatalog: loadModelCatalog,
