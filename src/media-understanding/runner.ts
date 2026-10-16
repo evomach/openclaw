@@ -16,7 +16,7 @@ import {
 import { providerSupportsCapability } from "../../packages/media-understanding-common/src/provider-supports.js";
 import { isMinimaxVlmModel, isMinimaxVlmProvider } from "../agents/minimax-vlm.js";
 import { isProviderAuthError } from "../agents/model-auth-runtime-shared.js";
-import { splitTrailingAuthProfile } from "../agents/model-ref-profile.js";
+import { configuredModelSupportsNativeVideo } from "../agents/model-input.js";
 import {
   buildModelAliasIndex,
   inferUniqueProviderFromConfiguredModels,
@@ -153,9 +153,6 @@ function resolveCatalogImageModelId(params: {
       normalizeMediaProviderId(entry.provider) === normalizeMediaProviderId(params.providerId) &&
       params.modelSupportsVision(entry),
   );
-  if (matches.length === 0) {
-    return undefined;
-  }
   const autoEntry = matches.find((entry) => normalizeLowercaseStringOrEmpty(entry.id) === "auto");
   return normalizeOptionalString((autoEntry ?? matches[0])?.id);
 }
@@ -342,62 +339,6 @@ async function activeModelSupportsNativeVision(
   });
   const entry = findModelInCatalog(catalog, activeProvider, params.activeModel?.model ?? "");
   return modelSupportsVision(entry);
-}
-
-function configuredActiveModelSupportsNativeVideo(
-  params: Omit<AutoModelSelectionParams, "capability" | "providerRegistry">,
-): boolean {
-  const activeProvider = params.activeModel?.provider?.trim();
-  const activeModel = params.activeModel?.model?.trim();
-  if (!activeProvider || !activeModel) {
-    return false;
-  }
-  const providerCfg = findNormalizedProviderValue(params.cfg.models?.providers, activeProvider);
-  if (!providerCfg) {
-    return false;
-  }
-  const modelId = splitTrailingAuthProfile(activeModel).model;
-  const modelCfg = providerCfg.models?.find((candidate) => candidate.id === modelId);
-  if (!modelCfg) {
-    return false;
-  }
-  const api = modelCfg.api ?? providerCfg.api;
-  return api === "openai-completions" && (modelCfg.input?.includes("video") ?? false);
-}
-
-// Mirrors the openai-completions transport contract that actually forwards a
-// video block (packages/ai/src/provider-transcript-transform.ts): only that api
-// carries video for a model declaring video input. Native-video providers that
-// own their own transport (google/qwen/moonshot) register describeVideo and are
-// resolved through the normal path, so gating on this exact api keeps the skip
-// from claiming a handoff the transport would omit.
-async function activeModelSupportsNativeVideo(
-  params: Omit<AutoModelSelectionParams, "capability" | "providerRegistry">,
-): Promise<boolean> {
-  const activeProvider = params.activeModel?.provider?.trim();
-  if (!activeProvider) {
-    return false;
-  }
-  if (configuredActiveModelSupportsNativeVideo(params)) {
-    return true;
-  }
-  try {
-    const { findModelInCatalog, readPreparedModelCatalog, modelSupportsInput } =
-      await loadPreparedModelCatalogApi();
-    const catalog = await readPreparedModelCatalog({
-      config: params.cfg,
-      ...(params.agentId ? { agentId: params.agentId } : {}),
-      ...(params.agentDir ? { agentDir: params.agentDir } : {}),
-      ...(params.workspaceDir ? { workspaceDir: params.workspaceDir } : {}),
-    });
-    const entry = findModelInCatalog(catalog, activeProvider, params.activeModel?.model ?? "");
-    return entry?.api === "openai-completions" && modelSupportsInput(entry, "video");
-  } catch (err: unknown) {
-    logWarn(
-      `video native capability check failed for ${activeProvider}/${params.activeModel?.model ?? ""}: ${String(err)}`,
-    );
-    return false;
-  }
 }
 
 async function* resolveAutoAudioEntries(
@@ -706,16 +647,6 @@ export async function runCapability(params: {
     });
     return nativeVisionProbe;
   };
-  let nativeVideoProbe: Promise<boolean | undefined> | undefined;
-  const resolveNativeVideoFlag = (): Promise<boolean | undefined> => {
-    nativeVideoProbe ??= activeModelSupportsNativeVideo(params).catch((err: unknown) => {
-      if (shouldLogVerbose()) {
-        logVerbose(`native video support check failed: ${String(err)}`);
-      }
-      return undefined;
-    });
-    return nativeVideoProbe;
-  };
   const buildDispositions = (
     selectedDisposition: MediaAttachmentDisposition,
     droppedDisposition = selectedDisposition,
@@ -727,11 +658,12 @@ export async function runCapability(params: {
     Object.values(dispositions).some(
       (d) => d.kind !== "handled" && d.kind !== "handed-to-native-vision",
     );
-  const buildDecision = async (
+  const buildResult = async (
     outcome: MediaUnderstandingDecision["outcome"],
     attachments: MediaUnderstandingDecision["attachments"],
     attachmentDispositions: Record<number, MediaAttachmentDisposition>,
-  ): Promise<MediaUnderstandingDecision> => {
+    outputs: MediaUnderstandingOutput[] = [],
+  ): Promise<RunCapabilityResult> => {
     // Record the fact whenever it is known (probe already ran) or needed
     // (a marker could render); never fire the probe for marker-free decisions.
     const nativeVisionActive =
@@ -740,64 +672,24 @@ export async function runCapability(params: {
         ? await resolveNativeVisionFlag()
         : undefined;
     return {
-      capability,
-      outcome,
-      attachments,
-      attachmentDispositions,
-      attachmentProcessing,
-      ...(nativeVisionActive !== undefined ? { nativeVisionActive } : {}),
+      outputs,
+      decision: {
+        capability,
+        outcome,
+        attachments,
+        attachmentDispositions,
+        attachmentProcessing,
+        ...(nativeVisionActive !== undefined ? { nativeVisionActive } : {}),
+      },
     };
   };
-  if (config?.enabled === false) {
-    return {
-      outputs: [],
-      decision: await buildDecision(
-        "disabled",
-        [],
-        buildDispositions({ kind: "capability-disabled" }),
-      ),
-    };
-  }
-
-  if (selection.selected.length === 0) {
-    return {
-      outputs: [],
-      decision: await buildDecision("no-attachment", [], {}),
-    };
-  }
-
-  const scopeDecision = resolveScopeDecision({ scope: config?.scope, ctx });
-  if (scopeDecision === "deny") {
+  const handOffToNativeModel = async (provider: string): Promise<RunCapabilityResult> => {
     if (shouldLogVerbose()) {
-      logVerbose(`${capability} understanding disabled by scope policy.`);
-    }
-    return {
-      outputs: [],
-      decision: await buildDecision(
-        "scope-deny",
-        selection.selected.map((item) => ({
-          attachmentIndex: item.index,
-          attempts: [],
-        })),
-        buildDispositions({ kind: "scope-denied" }),
-      ),
-    };
-  }
-
-  // Skip image understanding when the primary model supports vision natively.
-  // The image will be injected directly into the model context instead.
-  if (
-    capability === "image" &&
-    activeProvider &&
-    !hasExplicitImageUnderstandingConfig({ cfg, providerRegistry: params.providerRegistry }) &&
-    (await resolveNativeVisionFlag()) === true
-  ) {
-    if (shouldLogVerbose()) {
-      logVerbose("Skipping image understanding: primary model supports vision natively");
+      logVerbose(`Skipping ${capability} understanding: primary model supports it natively`);
     }
     const attempt = {
       type: "provider" as const,
-      provider: activeProvider,
+      provider,
       model: params.activeModel?.model?.trim() || undefined,
       outcome: "skipped" as const,
       reason: "primary model supports vision natively",
@@ -810,28 +702,57 @@ export async function runCapability(params: {
       (Boolean(item.url) && classifyMediaReferenceSource(item.url ?? "").isMediaStoreUrl);
     const attachmentDispositions = buildDispositions(
       { kind: "handed-to-native-vision" },
-      { kind: "not-selected" },
+      capability === "video" ? { kind: "handed-to-native-vision" } : { kind: "not-selected" },
     );
     for (const item of params.media) {
       if (attachmentDispositions[item.index] && !nativeDeliverable(item)) {
         attachmentDispositions[item.index] = {
           kind: "failed",
-          reason: "remote-url image is not natively deliverable",
+          reason: `remote-url ${capability} is not natively deliverable`,
         };
       }
     }
-    return {
-      outputs: [],
-      decision: await buildDecision(
-        "skipped",
-        selection.selected.map((item) =>
-          nativeDeliverable(item)
-            ? { attachmentIndex: item.index, attempts: [attempt], chosen: attempt }
-            : { attachmentIndex: item.index, attempts: [] },
-        ),
-        attachmentDispositions,
+    return await buildResult(
+      "skipped",
+      selection.selected.map((item) =>
+        nativeDeliverable(item)
+          ? { attachmentIndex: item.index, attempts: [attempt], chosen: attempt }
+          : { attachmentIndex: item.index, attempts: [] },
       ),
-    };
+      attachmentDispositions,
+    );
+  };
+  if (config?.enabled === false) {
+    return await buildResult("disabled", [], buildDispositions({ kind: "capability-disabled" }));
+  }
+
+  if (selection.selected.length === 0) {
+    return await buildResult("no-attachment", [], {});
+  }
+
+  if (resolveScopeDecision({ scope: config?.scope, ctx }) === "deny") {
+    if (shouldLogVerbose()) {
+      logVerbose(`${capability} understanding disabled by scope policy.`);
+    }
+    return await buildResult(
+      "scope-deny",
+      selection.selected.map((item) => ({
+        attachmentIndex: item.index,
+        attempts: [],
+      })),
+      buildDispositions({ kind: "scope-denied" }),
+    );
+  }
+
+  // Skip image understanding when the primary model supports vision natively.
+  // The image will be injected directly into the model context instead.
+  if (
+    capability === "image" &&
+    activeProvider &&
+    !hasExplicitImageUnderstandingConfig({ cfg, providerRegistry: params.providerRegistry }) &&
+    (await resolveNativeVisionFlag()) === true
+  ) {
+    return await handOffToNativeModel(activeProvider);
   }
 
   // Every path past the native-vision skip branch reads the registry: resolve
@@ -854,61 +775,26 @@ export async function runCapability(params: {
     });
   }
   if (!automaticAudio && resolvedEntries.length === 0) {
-    // No describeVideo provider resolved. When the reply model accepts video
-    // natively, the clip is injected into the model context directly, so a
-    // "no video-understanding model" marker would falsely claim non-delivery
-    // (mirrors the image native-vision handoff). Only reached when the resolver
-    // found nothing, so bundled native-video providers keep their describe pass.
-    if (capability === "video" && activeProvider && (await resolveNativeVideoFlag()) === true) {
-      if (shouldLogVerbose()) {
-        logVerbose("Skipping video understanding: primary model supports video natively");
-      }
-      const attempt = {
-        type: "provider" as const,
+    if (
+      capability === "video" &&
+      activeProvider &&
+      configuredModelSupportsNativeVideo({
+        cfg,
         provider: activeProvider,
-        model: params.activeModel?.model?.trim() || undefined,
-        outcome: "skipped" as const,
-        reason: "primary model supports video natively",
-      };
-      const nativeDeliverable = (item: MediaAttachment) =>
-        Boolean(item.path) ||
-        (Boolean(item.url) && classifyMediaReferenceSource(item.url ?? "").isMediaStoreUrl);
-      const attachmentDispositions = buildDispositions(
-        { kind: "handed-to-native-vision" },
-        { kind: "not-selected" },
-      );
-      for (const item of params.media) {
-        if (attachmentDispositions[item.index] && !nativeDeliverable(item)) {
-          attachmentDispositions[item.index] = {
-            kind: "failed",
-            reason: "remote-url video is not natively deliverable",
-          };
-        }
-      }
-      return {
-        outputs: [],
-        decision: await buildDecision(
-          "skipped",
-          selection.selected.map((item) =>
-            nativeDeliverable(item)
-              ? { attachmentIndex: item.index, attempts: [attempt], chosen: attempt }
-              : { attachmentIndex: item.index, attempts: [] },
-          ),
-          attachmentDispositions,
-        ),
-      };
+        modelId: params.activeModel?.model ?? "",
+        api: params.activeModel?.api,
+      })
+    ) {
+      return await handOffToNativeModel(activeProvider);
     }
-    return {
-      outputs: [],
-      decision: await buildDecision(
-        "skipped",
-        selection.selected.map((item) => ({
-          attachmentIndex: item.index,
-          attempts: [],
-        })),
-        buildDispositions({ kind: "no-model" }, { kind: "not-selected" }),
-      ),
-    };
+    return await buildResult(
+      "skipped",
+      selection.selected.map((item) => ({
+        attachmentIndex: item.index,
+        attempts: [],
+      })),
+      buildDispositions({ kind: "no-model" }, { kind: "not-selected" }),
+    );
   }
 
   const outputs: MediaUnderstandingOutput[] = [];
@@ -946,7 +832,7 @@ export async function runCapability(params: {
       chosen: attempts.find((attempt) => attempt.outcome === "success"),
     });
   }
-  const decision = await buildDecision(
+  const result = await buildResult(
     outputs.length > 0
       ? "success"
       : hasFailedMediaAttempt(attachmentDecisions)
@@ -954,15 +840,14 @@ export async function runCapability(params: {
         : "skipped",
     attachmentDecisions,
     attachmentDispositions,
+    outputs,
   );
+  const { decision } = result;
   if (decision.outcome === "failed") {
     logWarn(`media-understanding: ${formatDecisionSummary(decision)}`);
   } else if (shouldLogVerbose()) {
     logVerbose(`Media understanding ${formatDecisionSummary(decision)}`);
   }
-  return {
-    outputs,
-    decision,
-  };
+  return result;
 }
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

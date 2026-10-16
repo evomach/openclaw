@@ -1,7 +1,12 @@
 import { expectDefined } from "@openclaw/normalization-core/expect";
 import { describe, expect, it, vi } from "vitest";
-import type { OpenClawConfig } from "../config/types.js";
+import type {
+  ModelDefinitionConfig,
+  ModelProviderConfig,
+  OpenClawConfig,
+} from "../config/types.js";
 import type { MediaUnderstandingModelConfig } from "../config/types.tools.js";
+import { createMediaAttachmentCache, normalizeMediaAttachments } from "./runner.attachments.js";
 import { runCapability } from "./runner.js";
 import { withVideoFixture } from "./runner.test-utils.js";
 import type { MediaUnderstandingProvider } from "./types.js";
@@ -28,14 +33,6 @@ vi.mock("../agents/model-auth.js", async () => {
   return createAvailableModelAuthMockModule();
 });
 
-const loadModelCatalog = vi.hoisted(() => vi.fn(async () => [] as unknown[]));
-
-// mock-isolation: catalog loads are stubbed canned fixtures; real prepared-catalog files must not influence runner model selection.
-vi.mock("../agents/prepared-model-catalog.js", () => ({
-  loadProviderScopedThinkingCatalog: vi.fn(async () => []),
-  readPreparedModelCatalog: loadModelCatalog,
-}));
-
 function videoConfig(models?: MediaUnderstandingModelConfig[]): OpenClawConfig {
   return {
     models: {
@@ -44,6 +41,33 @@ function videoConfig(models?: MediaUnderstandingModelConfig[]): OpenClawConfig {
       },
     },
     tools: { media: { models, video: { enabled: true } } },
+  };
+}
+
+function nativeVideoConfig(
+  input: ModelDefinitionConfig["input"] = ["text", "video"],
+  api: ModelProviderConfig["api"] = "openai-completions",
+): OpenClawConfig {
+  return {
+    models: {
+      providers: {
+        lmstudio: {
+          baseUrl: "http://127.0.0.1:1234/v1",
+          api,
+          models: [
+            {
+              id: "video-model",
+              name: "Video model",
+              reasoning: false,
+              input,
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: 8192,
+              maxTokens: 1024,
+            },
+          ],
+        },
+      },
+    },
   };
 }
 
@@ -68,6 +92,98 @@ async function runVideo(
 }
 
 describe("runCapability video", () => {
+  it.each([
+    {
+      name: "hands configured completions video to the active model",
+      cfg: nativeVideoConfig(),
+      kind: "handed-to-native-vision",
+    },
+    {
+      name: "does not hand video to a text-only completions model",
+      cfg: nativeVideoConfig(["text"]),
+      kind: "no-model",
+    },
+    {
+      name: "does not hand video to a model using another API",
+      cfg: nativeVideoConfig(["text", "video"], "openai-responses"),
+      kind: "no-model",
+    },
+  ])("$name", async ({ cfg, kind }) => {
+    const result = await runVideo({ id: "lmstudio" }, cfg, {
+      provider: "lmstudio",
+      model: "video-model",
+    });
+    expect(result.outputs).toEqual([]);
+    expect(result.decision.attachmentDispositions).toEqual({ 0: { kind } });
+  });
+
+  it.each([
+    { api: "openai-completions", kind: "handed-to-native-vision" },
+    { api: "openai-responses", kind: "no-model" },
+  ] as const)("uses prepared $api when the authored API is omitted", async ({ api, kind }) => {
+    const cfg = nativeVideoConfig();
+    delete expectDefined(cfg.models?.providers?.lmstudio, "provider").api;
+    const result = await runVideo({ id: "lmstudio" }, cfg, {
+      provider: "lmstudio",
+      model: "video-model",
+      api,
+    });
+    expect(result.outputs).toEqual([]);
+    expect(result.decision.attachmentDispositions).toEqual({ 0: { kind } });
+  });
+
+  it("hands off every local video despite the default understanding attachment limit", async () => {
+    await withVideoFixture("openclaw-video-first", async (first) => {
+      await withVideoFixture("openclaw-video-second", async (second) => {
+        const ctx = { media: [...first.ctx.media, ...second.ctx.media] };
+        const media = normalizeMediaAttachments(ctx);
+        const cache = createMediaAttachmentCache(media);
+        try {
+          const result = await runCapability({
+            capability: "video",
+            cfg: nativeVideoConfig(),
+            ctx,
+            attachments: cache,
+            media,
+            providerRegistry: new Map(),
+            activeModel: { provider: "lmstudio", model: "video-model" },
+          });
+          expect(result.decision.attachmentDispositions).toEqual({
+            0: { kind: "handed-to-native-vision" },
+            1: { kind: "handed-to-native-vision" },
+          });
+        } finally {
+          await cache.cleanup();
+        }
+      });
+    });
+  });
+
+  it("does not claim native handoff for a remote video URL", async () => {
+    const ctx = {
+      media: [{ url: "https://cdn.example.test/video.mp4", contentType: "video/mp4" }],
+    };
+    const media = normalizeMediaAttachments(ctx);
+    const cache = createMediaAttachmentCache(media);
+    try {
+      const result = await runCapability({
+        capability: "video",
+        cfg: nativeVideoConfig(),
+        ctx,
+        attachments: cache,
+        media,
+        providerRegistry: new Map(),
+        activeModel: { provider: "lmstudio", model: "video-model" },
+      });
+      expect(result.decision.attachmentDispositions).toEqual({
+        0: { kind: "failed", reason: "remote-url video is not natively deliverable" },
+      });
+      expect(result.decision.attachments).toEqual([{ attachmentIndex: 0, attempts: [] }]);
+    } finally {
+      await cache.cleanup();
+    }
+  });
+
   it("truncates provider output without splitting a boundary emoji", async () => {
     const prefix = "v".repeat(79);
     const result = await runVideo(
@@ -106,91 +222,5 @@ describe("runCapability video", () => {
       model: "provider-default",
     });
     expect(seenModel).toBeUndefined();
-  });
-
-  it("hands video to a natively video-capable reply model instead of a no-model marker", async () => {
-    let result: Awaited<ReturnType<typeof runCapability>> | undefined;
-    await loadModelCatalog.withImplementation(
-      async () => [
-        {
-          provider: "llm-local",
-          id: "qwen3.8-flash-next-iq3_s",
-          api: "openai-completions",
-          input: ["text", "image", "video"],
-        },
-      ],
-      async () => {
-        await withVideoFixture("openclaw-video-native", async ({ ctx, media, cache }) => {
-          result = await runCapability({
-            capability: "video",
-            cfg: { tools: { media: { video: { enabled: true } } } },
-            ctx,
-            attachments: cache,
-            media,
-            providerRegistry: new Map(),
-            activeModel: { provider: "llm-local", model: "qwen3.8-flash-next-iq3_s" },
-          });
-        });
-      },
-    );
-    const videoResult = expectDefined(result, "video result");
-    expect(videoResult.decision.outcome).toBe("skipped");
-    expect(videoResult.decision.attachmentDispositions).toEqual({
-      0: { kind: "handed-to-native-vision" },
-    });
-    expect(videoResult.outputs).toHaveLength(0);
-  });
-
-  it("hands video from config when the prepared catalog read fails", async () => {
-    let result: Awaited<ReturnType<typeof runCapability>> | undefined;
-    await loadModelCatalog.withImplementation(
-      async () => {
-        throw new Error("sqlite lock timeout");
-      },
-      async () => {
-        await withVideoFixture(
-          "openclaw-video-native-config-fallback",
-          async ({ ctx, media, cache }) => {
-            result = await runCapability({
-              capability: "video",
-              cfg: {
-                models: {
-                  providers: {
-                    "llm-local": {
-                      baseUrl: "http://127.0.0.1:5468/v1",
-                      api: "openai-completions",
-                      apiKey: "not-needed",
-                      models: [
-                        {
-                          id: "qwen3.8-flash-next-iq3_s",
-                          name: "qwen3.8-flash-next-iq3_s",
-                          api: "openai-completions",
-                          reasoning: true,
-                          input: ["text", "image", "video"],
-                          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-                          maxTokens: 1024,
-                        },
-                      ],
-                    },
-                  },
-                },
-                tools: { media: { video: { enabled: true } } },
-              },
-              ctx,
-              attachments: cache,
-              media,
-              providerRegistry: new Map(),
-              activeModel: { provider: "llm-local", model: "qwen3.8-flash-next-iq3_s" },
-            });
-          },
-        );
-      },
-    );
-    const videoResult = expectDefined(result, "video result");
-    expect(videoResult.decision.outcome).toBe("skipped");
-    expect(videoResult.decision.attachmentDispositions).toEqual({
-      0: { kind: "handed-to-native-vision" },
-    });
-    expect(videoResult.outputs).toHaveLength(0);
   });
 });

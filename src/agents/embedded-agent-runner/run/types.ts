@@ -13,6 +13,7 @@ import type { CommandQueueTaskDeadline } from "../../../process/command-queue.ty
 import type { AcceptedSessionSpawn } from "../../accepted-session-spawn.js";
 import type { AgentHarnessCompletionScope } from "../../agent-harness-completion-scope.js";
 import type { AgentRunAttemptTerminal } from "../../agent-run-terminal-outcome.js";
+import type { PreparedAgentRunTerminalReply } from "../../agent-run-terminal-reply.js";
 import type { ToolOutcomeObserver } from "../../agent-tools.before-tool-call.types.js";
 import type { AuthProfileStore } from "../../auth-profiles/types.js";
 import type { ContextWindowInfo } from "../../context-window-guard.js";
@@ -144,10 +145,6 @@ export type EmbeddedRunAttemptTrajectoryRecorder = {
 
 export type EmbeddedRunAttemptParams = EmbeddedRunAttemptBase & {
   modelCallSequence?: { value: number };
-  /** Canonical media facts from the active user turn's persisted message; used to
-   * re-inject facts when the session layer rebuilds the provider transcript copy
-   * without any fact carrier. */
-  currentTurnMediaFacts?: import("../../../media/media-facts.js").MediaFact[];
   /** Recomputed by the host for this attempt; never inherited from the requesting turn. */
   githubPublicationAvailable?: boolean;
   disableToolSearch?: true;
@@ -286,6 +283,7 @@ export type EmbeddedRunAttemptParams = EmbeddedRunAttemptBase & {
 
 export type EmbeddedRunAttemptResult = {
   terminal: AgentRunAttemptTerminal;
+  preparedTerminalReply?: PreparedAgentRunTerminalReply;
   /** Prepared policy that explains unavailable tools without another session read. */
   sandboxRuntime?: ReturnType<typeof resolveSandboxRuntimeStatus>;
   /** True when the runtime made the authoritative final-assistant transcript decision. */

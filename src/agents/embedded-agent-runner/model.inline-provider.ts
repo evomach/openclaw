@@ -88,28 +88,17 @@ function isLegacyFoundryVisionModelCandidate(params: {
   );
 }
 
-/**
- * Resolves model input modalities with Foundry legacy vision-model compatibility.
- *
- * Provider boundary: declared `video` survives as a runtime value so provider
- * transports can observe it. The provider-side `ProviderModel.input` union
- * (packages/ai/provider-types) legitimizes it on the wire; the canonical
- * registry `Model.input` stays text/image, and canonical consumers treat
- * unknown modalities as absent.
- */
+/** Resolves model input modalities with Foundry legacy vision-model compatibility. */
 export function resolveProviderModelInput(params: {
   provider?: string;
   modelId?: string;
   modelName?: string;
   input?: unknown;
   fallbackInput?: unknown;
-}): ProviderRuntimeModel["input"] {
+}): Array<"text" | "image"> {
   const resolvedInput = Array.isArray(params.input) ? params.input : params.fallbackInput;
   const normalizedInput = Array.isArray(resolvedInput)
-    ? resolvedInput.filter(
-        (item): item is "text" | "image" | "video" =>
-          item === "text" || item === "image" || item === "video",
-      )
+    ? resolvedInput.filter((item): item is "text" | "image" => item === "text" || item === "image")
     : [];
   if (
     normalizedInput.length > 0 &&
@@ -118,8 +107,7 @@ export function resolveProviderModelInput(params: {
   ) {
     return ["text", "image"];
   }
-  // SAFETY: the filter above admits only text/image/video, which is exactly the provider-side input union.
-  return normalizedInput.length > 0 ? (normalizedInput as ProviderRuntimeModel["input"]) : ["text"];
+  return normalizedInput.length > 0 ? normalizedInput : ["text"];
 }
 
 export function buildInlineProviderModels(

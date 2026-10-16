@@ -1,21 +1,20 @@
 import path from "node:path";
-import type { ModelInputContent, ProviderContext } from "@openclaw/ai/provider-types";
 import { assertNoWindowsNetworkPath, safeFileURLToPath } from "@openclaw/fs-safe/advanced";
 import { MAX_VIDEO_BYTES } from "@openclaw/media-core/constants";
 import { normalizeMimeType } from "@openclaw/media-core/mime";
 import { asNonArrayRecord } from "@openclaw/normalization-core/record-coerce";
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
-import { isRuntimeContextCarrier } from "../../../../packages/agent-core/src/harness/messages.js";
+import type {
+  ModelInputContent,
+  ProviderContext,
+} from "../../../../packages/ai/src/provider-types.js";
 import { formatErrorMessage } from "../../../infra/errors.js";
 import type { Context, ImageContent, TextContent } from "../../../llm/types.js";
 import { redactSensitiveText } from "../../../logging/redact.js";
 import {
-  attachRuntimePromptMediaFacts,
-  canonicalizePersistedUserMessageMedia,
   isImageMediaFact,
   isVideoMediaFact,
   normalizeMediaFacts,
-  readRuntimePromptImageOrder,
   readRuntimePromptMediaFacts,
   readPersistedMediaFacts,
   type MediaFact,
@@ -460,12 +459,6 @@ type PromptMediaOptions = {
   provider?: boolean;
   signal?: AbortSignal;
   onCurrentTurnImageFailure?: (count: number) => void;
-  /**
-   * Canonical facts for the active turn, supplied by the run when the provider
-   * transcript's copy of the user message was rebuilt by the session layer and
-   * lost every fact carrier (runtime symbols, __openclaw, legacy fields).
-   */
-  currentTurnFacts?: MediaFact[];
 };
 
 export function buildPromptImageFailureNotice(count: number): string {
@@ -558,62 +551,16 @@ async function materializePromptMediaMessages(
 ): Promise<AgentMessage[]> {
   let hydrated: AgentMessage[] | undefined;
   const videoBudget = { remaining: MAX_VIDEO_BYTES };
-  // Runtime-context carrier wrappers are user-role rows; the active user turn is
-  // the last real user message, never a carrier. Use the shared structural
-  // contract only: text-delimiter sniffing misses rebuilt carriers and
-  // false-positives on human messages that quote the delimiters.
-  const activeUserIndex = messages.findLastIndex(
-    (message) => message.role === "user" && !isRuntimeContextCarrier(message),
-  );
+  const activeUserIndex = messages.findLastIndex((message) => message.role === "user");
   for (const [index, message] of messages.entries()) {
     if (message.role !== "user") {
       continue;
     }
     const runtimeMedia = readRuntimePromptMediaFacts(message);
     const meta = Reflect.get(message, "__openclaw");
-    let resolvedMedia = runtimeMedia ?? readPersistedMediaFacts(message);
-    if (!resolvedMedia?.length) {
-      // Transcript append canonicalizes legacy/top-level media into __openclaw, but
-      // in-memory context copies can predate that projection (freshly drained or
-      // queued turns). Recover the same facts instead of omitting the media.
-      try {
-        // SAFETY: transcript messages are structural records for the legacy media canonicalizer.
-        const canonicalized = canonicalizePersistedUserMessageMedia(message as object);
-        resolvedMedia = canonicalized.changed
-          ? readPersistedMediaFacts(canonicalized.message)
-          : undefined;
-      } catch {
-        resolvedMedia = undefined;
-      }
-    }
-    let resolvedMediaOrEmpty = resolvedMedia ?? [];
-    if (options.provider && index === activeUserIndex && !resolvedMediaOrEmpty.length) {
-      const injected = options.currentTurnFacts?.length
-        ? normalizeMediaFacts(options.currentTurnFacts)
-        : undefined;
-      if (injected?.length) {
-        resolvedMediaOrEmpty = injected;
-      }
-    }
-    if (options.provider && resolvedMediaOrEmpty.some((fact) => isVideoMediaFact(fact))) {
-      // SAFETY: __openclaw metadata is an untyped carrier; only .media length is read for diagnostics.
-      const metaMedia = (meta as { media?: unknown[] } | undefined)?.media;
-      log.warn(
-        `provider media facts: message=${index}/${messages.length} activeUser=${index === activeUserIndex} runtimeFacts=${runtimeMedia ? runtimeMedia.length : "none"} metaMedia=${Array.isArray(metaMedia) ? metaMedia.length : "none"} resolved=${resolvedMediaOrEmpty.length}`,
-      );
-    } else if (
-      options.provider &&
-      !resolvedMediaOrEmpty.length &&
-      Array.isArray(asNonArrayRecord(message).media)
-    ) {
-      log.warn(
-        // SAFETY: the Array.isArray guard above proves media is an array; length is read for diagnostics.
-        `unprojected user media facts: message=${index}/${messages.length} topLevelMedia=${(asNonArrayRecord(message).media as unknown[]).length}`,
-      );
-    }
-    const runtimeImageOrder = readRuntimePromptImageOrder(message);
+    const resolvedMedia = runtimeMedia ?? readPersistedMediaFacts(message) ?? [];
     const mediaImageLayout = readPersistedMediaImageLayout(message);
-    if (!resolvedMediaOrEmpty.length) {
+    if (!resolvedMedia.length) {
       continue;
     }
     const content = Array.isArray(message.content)
@@ -623,14 +570,14 @@ async function materializePromptMediaMessages(
     const result = await detectAndLoadPromptImages({
       ...options,
       prompt: "",
-      media: resolvedMediaOrEmpty,
+      media: resolvedMedia,
       existingImages,
       existingImageFactIndexes: readPersistedImageBlockFactIndexes(message),
       mediaImageLayout,
     });
     const projectedContent = await projectOrderedPromptMedia({
       content,
-      media: resolvedMediaOrEmpty,
+      media: resolvedMedia,
       images: result.images,
       imageFactIndexes: result.imageFactIndexes,
       options,
@@ -675,15 +622,12 @@ async function materializePromptMediaMessages(
     } else {
       Reflect.deleteProperty(hydratedMessage, "__openclaw");
     }
-    if (runtimeMedia) {
-      attachRuntimePromptMediaFacts(hydratedMessage, runtimeMedia, runtimeImageOrder);
-    }
     hydrated[index] = hydratedMessage;
   }
   return hydrated ?? messages;
 }
 
-/** Hydrates non-enumerable facts carried by queued user turns before canonical replay. */
+/** Hydrates runtime facts carried by queued user turns before canonical replay. */
 export async function hydratePromptMediaMessages(
   messages: AgentMessage[],
   options: Omit<PromptMediaOptions, "provider">,

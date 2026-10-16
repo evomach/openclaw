@@ -1,3 +1,4 @@
+import { PROVIDER_MODEL_INPUT } from "@openclaw/ai/provider-types";
 import {
   isAnthropicServerToolClearingEnabled,
   resolveCompactionReplayEligibility,
@@ -13,10 +14,10 @@ import { resolveAdmittedRunActiveAssertion } from "../../admitted-run-context.js
 import type { AgentRunAttemptFailureSource } from "../../agent-run-terminal-outcome.js";
 import type { subscribeEmbeddedAgentSession } from "../../embedded-agent-subscribe.js";
 import { resolveSelectedModelCredential } from "../../model-auth-selected-credential.js";
+import { configuredModelSupportsNativeVideo } from "../../model-input.js";
 import { wrapStreamFnTextTransforms } from "../../plugin-text-transforms.js";
 import { registerProviderStreamForModel } from "../../provider-stream.js";
 import { resolveModelCallUrgency } from "../../run-trigger.js";
-import type { StreamFn } from "../../runtime/index.js";
 import type { SandboxContext } from "../../sandbox/types.js";
 import type { AgentSession, SessionManager, SettingsManager } from "../../sessions/index.js";
 import { withSessionManagerAppend } from "../../sessions/session-manager-append-admission.js";
@@ -460,36 +461,6 @@ export async function prepareEmbeddedAttemptTransport(input: {
     sessionId: attempt.sessionId,
     agentId: input.sessionAgentId,
   };
-  const materializeAttemptProviderContext = async (provider: {
-    context: Parameters<StreamFn>[1];
-    signal?: AbortSignal;
-  }) => {
-    assertRunCurrent?.();
-    const prepared = await materializeProviderContext({
-      ...provider,
-      workspaceDir: input.workspaceDir,
-      agentWorkspaceDir: attempt.workspaceDir,
-      workspaceOnly: input.workspaceOnly,
-      localRoots: input.workspaceOnly
-        ? undefined
-        : getAgentScopedMediaLocalRoots(attempt.config ?? {}, input.sessionAgentId),
-      currentTurnFacts: attempt.currentTurnMediaFacts,
-      onCurrentTurnImageFailure: input.onCurrentTurnImageFailure,
-      sandbox:
-        input.sandbox?.enabled && input.sandbox.fsBridge
-          ? { root: input.sandbox.workspaceDir, bridge: input.sandbox.fsBridge }
-          : undefined,
-    });
-    assertRunCurrent?.();
-    return prepared;
-  };
-  const directProviderStreamFn = providerStreamFn
-    ? wrapStreamFnWithMessageTransform(
-        wrapStreamFnWithSessionFork(providerStreamFn, sessionFork),
-        (messages) => messages,
-        materializeAttemptProviderContext,
-      )
-    : undefined;
   const transportApiKey = await resolveEmbeddedAgentApiKey({
     provider: attempt.model.provider,
     resolvedApiKey: attempt.resolvedApiKey,
@@ -501,7 +472,9 @@ export async function prepareEmbeddedAttemptTransport(input: {
     wrapApiKey,
   } = selectEmbeddedAgentStream({
     currentStreamFn: defaultSessionStreamFn,
-    providerStreamFn: directProviderStreamFn,
+    providerStreamFn: providerStreamFn
+      ? wrapStreamFnWithSessionFork(providerStreamFn, sessionFork)
+      : undefined,
     sessionId: attempt.sessionId,
     promptCacheKey: attempt.promptCacheKey,
     signal: input.abortSignal,
@@ -513,21 +486,45 @@ export async function prepareEmbeddedAttemptTransport(input: {
     assertCurrent: assertRunCurrent,
     sessionFork,
   });
-  // Managed/boundary transports can be selected without a plugin provider
-  // stream, so the provider-context handoff must be installed for those too.
-  const boundaryStreamFn = providerStreamFn
-    ? streamFn
-    : wrapStreamFnWithMessageTransform(
-        streamFn,
-        (messages) => messages,
-        materializeAttemptProviderContext,
-      );
+  const boundaryStreamFn = wrapStreamFnWithMessageTransform(
+    streamFn,
+    (messages) => messages,
+    async ({ context, ...provider }) => {
+      assertRunCurrent?.();
+      const prepared = await materializeProviderContext({
+        ...provider,
+        context,
+        workspaceDir: input.workspaceDir,
+        agentWorkspaceDir: attempt.workspaceDir,
+        workspaceOnly: input.workspaceOnly,
+        localRoots: input.workspaceOnly
+          ? undefined
+          : getAgentScopedMediaLocalRoots(attempt.config ?? {}, input.sessionAgentId),
+        onCurrentTurnImageFailure: input.onCurrentTurnImageFailure,
+        sandbox:
+          input.sandbox?.enabled && input.sandbox.fsBridge
+            ? { root: input.sandbox.workspaceDir, bridge: input.sandbox.fsBridge }
+            : undefined,
+      });
+      assertRunCurrent?.();
+      return prepared;
+    },
+  );
+  const providerInput = configuredModelSupportsNativeVideo({
+    cfg: attempt.config,
+    provider: attempt.model.provider,
+    modelId: attempt.model.id,
+    api: attempt.model.api,
+  })
+    ? [...attempt.model.input, "video" as const]
+    : undefined;
   // A direct provider transport replaces the session SDK stream, so attach
   // turn-owned thinking provenance to the selected transport as well.
   session.agent.streamFn = (model, context, options) => {
     const providerOptions = {
       ...options,
       openclawThinkingExplicit: attempt.thinkingExplicit,
+      ...(providerInput ? { [PROVIDER_MODEL_INPUT]: providerInput } : {}),
     };
     return boundaryStreamFn(model, context, providerOptions);
   };

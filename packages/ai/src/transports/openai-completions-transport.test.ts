@@ -2,7 +2,6 @@ import { createServer } from "node:http";
 import { describe, expect, it, vi } from "vitest";
 import { configureAiTransportHost, getAiTransportHost } from "../host.js";
 import type { OpenAICompletionsOptions } from "../provider-options.js";
-import { PROVIDER_CONTEXT_HANDOFF } from "../provider-types.js";
 import type { Context, Model, SimpleStreamOptions } from "../types.js";
 import type { FirstStreamEventInternalOptions } from "../utils/stream-first-event-timeout.js";
 import { createOpenAICompletionsTransportStreamFn } from "./openai-completions-transport.js";
@@ -88,51 +87,6 @@ describe("openai completions transport", () => {
       expect(body.reasoning?.effort).toBe(responsesEffort);
     },
   );
-
-  it("materializes provider context handoff before building completions payloads", async () => {
-    const request = await captureTransportRequest(
-      makeCompletionsModel({
-        id: "local-video-model",
-        name: "Local Video Model",
-        provider: "llm-local",
-        baseUrl: "http://127.0.0.1:5468/v1",
-        reasoning: false,
-        // Provider-boundary fixture: declared video rides the wire model at
-        // runtime; the canonical alias requires the same downcast the
-        // transport boundary performs.
-        input: ["text", "image", "video"] as Model<"openai-completions">["input"],
-        contextWindow: 262_144,
-        maxTokens: 16_384,
-      }),
-      [],
-      {
-        apiKey: "test-key",
-        [PROVIDER_CONTEXT_HANDOFF]: async () => ({
-          systemPrompt: "system",
-          messages: [
-            {
-              role: "user",
-              content: [
-                { type: "text", text: "inspect" },
-                { type: "video", data: "Zm9v", mimeType: "video/mp4" },
-              ],
-              timestamp: 1,
-            },
-          ],
-          tools: [],
-        }),
-      } as never,
-    );
-    const body = await request.json();
-    const user = (body.messages as Array<Record<string, unknown>>).find(
-      (message) => message.role === "user",
-    );
-
-    expect(user?.content).toEqual([
-      { type: "text", text: "inspect" },
-      { type: "video_url", video_url: { url: "data:video/mp4;base64,Zm9v" } },
-    ]);
-  });
 
   it("passes provider request timeouts to OpenAI SDK per-request options", () => {
     const signal = new AbortController().signal;

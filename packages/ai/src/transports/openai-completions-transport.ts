@@ -14,7 +14,7 @@ import {
   reasoningTagTextPolicy,
   type OpenAICompletionsOptions,
 } from "../provider-options.js";
-import { resolveProviderContext, type ProviderStreamOptions } from "../provider-types.js";
+import { resolveProviderContext } from "../provider-types.js";
 import { resolveCacheRetention } from "../providers/cache-retention.js";
 import { buildCopilotDynamicHeaders } from "../providers/github-copilot-headers.js";
 import { finalizeOpenAICompletionsToolCalls } from "../providers/openai-completions-tool-calls.js";
@@ -315,12 +315,7 @@ export function streamOpenAICompletionsRequest(
     let discardCandidate = false;
     let firstEventAbort: ReturnType<typeof createFirstStreamEventAbortController> | undefined;
     try {
-      const requestContext = (await resolveProviderContext(
-        context,
-        // SAFETY: provider-side options are the wire-level stream settings for this transport call.
-        options as ProviderStreamOptions | undefined,
-        // SAFETY: the resolver preserves the Context shape and only widens declared input modalities.
-      )) as Context;
+      const requestContext = await resolveProviderContext(context, options);
       const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
       const directEmitReasoning = Boolean(
         mode === "direct" &&
@@ -338,7 +333,7 @@ export function streamOpenAICompletionsRequest(
           ? {
               client: createDirectCompletionsClient(
                 model,
-                requestContext,
+                context,
                 apiKey,
                 options,
                 cacheRetention === "none" ? undefined : options?.sessionId,
@@ -346,7 +341,7 @@ export function streamOpenAICompletionsRequest(
               ),
               sawStreamDONE: undefined,
             }
-          : createManagedCompletionsClient(model, requestContext, options, apiKey, cacheRetention);
+          : createManagedCompletionsClient(model, context, options, apiKey, cacheRetention);
       const builtParams = buildOpenAICompletionsRequest(model, requestContext, options, policy);
       let params = builtParams;
       const encodeBody = prepareModelRequestBody(options);

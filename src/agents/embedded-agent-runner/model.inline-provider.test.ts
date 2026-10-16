@@ -3,19 +3,15 @@ import { buildInlineProviderModels } from "./model.inline-provider.js";
 import { makeModel } from "./model.test-harness.js";
 
 describe("buildInlineProviderModels", () => {
-  it("preserves declared video input modality for custom providers", () => {
-    const model = {
-      ...makeModel("vision-video-model"),
-      input: ["text", "image", "video"] as ("text" | "image" | "video")[],
-    };
-    const [entry] = buildInlineProviderModels({
-      "llm-local": {
-        baseUrl: "http://127.0.0.1:5468/v1",
+  it("keeps declared video out of the shared runtime input modalities", () => {
+    const result = buildInlineProviderModels({
+      lmstudio: {
+        baseUrl: "http://127.0.0.1:1234/v1",
         api: "openai-completions",
-        models: [model],
+        models: [{ ...makeModel("video-model"), input: ["text", "image", "video"] }],
       },
     });
-    expect(entry?.input).toEqual(["text", "image", "video"]);
+    expect(result[0]?.input).toEqual(["text", "image"]);
   });
 
   it("inherits the configured Pi transport for models without an API override", () => {

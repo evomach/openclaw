@@ -35,22 +35,13 @@ export function wrapStreamFnWithMessageTransform(
     if (!materializeProviderContext) {
       return streamFn(model, nextContext, options);
     }
-    let availableContext: Parameters<StreamFn>[1] | undefined = nextContext;
-    let handoffPromise: Promise<ProviderContext> | undefined;
+    let providerContext: Promise<ProviderContext> | undefined;
     const handoff = async (): Promise<ProviderContext> => {
-      if (!handoffPromise) {
-        const captured = availableContext;
-        availableContext = undefined;
-        if (!captured) {
-          throw new Error("provider context handoff already consumed");
-        }
-        options?.signal?.throwIfAborted();
-        handoffPromise = materializeProviderContext({
-          context: captured,
-          signal: options?.signal,
-        });
-      }
-      return await handoffPromise;
+      options?.signal?.throwIfAborted();
+      return (providerContext ??= materializeProviderContext({
+        context: nextContext,
+        signal: options?.signal,
+      }));
     };
     return streamFn(model, nextContext, {
       ...options,

@@ -10,6 +10,7 @@ import {
 } from "../../agents/agent-scope.js";
 import { prepareConversationCapabilityProfile } from "../../agents/conversation-capability-profile.js";
 import { projectConversationToolNames } from "../../agents/conversation-tool-policy-pipeline.js";
+import { findModelInCatalog } from "../../agents/model-catalog-lookup.js";
 import type { ModelCatalogSnapshot } from "../../agents/model-catalog.types.js";
 import { splitTrailingAuthProfile } from "../../agents/model-ref-profile.js";
 import { resolveModelRefFromString } from "../../agents/model-selection.js";
@@ -55,7 +56,6 @@ import {
 } from "../reply-payload.js";
 import type { RuntimeMsgContext as MsgContext } from "../templating.js";
 import { normalizeThinkLevel } from "../thinking.js";
-import { SILENT_REPLY_TOKEN } from "../tokens.js";
 import { finishCommandTurn } from "./command-turn-completion.js";
 import { resolveDefaultModel } from "./directive-handling.defaults.js";
 import { resolveActiveExplicitSteerSessionKey } from "./explicit-steer-routing.js";
@@ -300,7 +300,6 @@ async function resolveReplyFromConfig(
       onCleanup: opts?.onTypingCleanup,
       typingIntervalSeconds,
       keepalive: opts?.typingKeepalive ?? true,
-      silentToken: SILENT_REPLY_TOKEN,
       log: defaultRuntime.log,
     });
     opts?.onTypingController?.(controller);
@@ -460,32 +459,31 @@ async function resolveReplyFromConfig(
   const utilityModelSelectionLocked = isModelSelectionLocked(preprocessingState?.sessionEntry);
 
   if (mediaUnderstandingRequested) {
-    const shouldApplyLockedAudio =
-      utilityModelSelectionLocked &&
-      hasInboundAudio(finalized) &&
-      hasExplicitAudioUnderstandingConfig(cfg);
     // Native harnesses receive images directly, but generic file attachments
     // still need host extraction. Only explicitly configured STT runs when locked.
     const mediaResult = await traceGetReplyPhase("reply.apply_media_understanding", () =>
       applyMediaUnderstandingIfNeeded({
         ctx: finalized,
         ...workspaceContext,
-        activeModel: { provider, model },
+        activeModel: {
+          provider,
+          model,
+          api: findModelInCatalog(preparedModelCatalog?.entries ?? [], provider, model)?.api,
+        },
         // Cache and classify now; the final provider and owner policy are
         // resolved later, immediately before the embedded turn starts.
         selfServeLocalPaths: false,
         ...(utilityModelSelectionLocked
           ? {
-              processingMode: shouldApplyLockedAudio
-                ? ("audio-and-files" as const)
-                : ("files-only" as const),
+              processingMode:
+                hasInboundAudio(finalized) && hasExplicitAudioUnderstandingConfig(cfg)
+                  ? ("audio-and-files" as const)
+                  : ("files-only" as const),
             }
           : {}),
       }),
     );
-    if (mediaResult?.extractedFileImages.length) {
-      extractedFileImages = mediaResult.extractedFileImages;
-    }
+    extractedFileImages = mediaResult?.extractedFileImages;
     enableLocalPathSelfServe = mediaResult?.enableLocalPathSelfServe;
   }
   if (linkUnderstandingRequested && !utilityModelSelectionLocked) {
