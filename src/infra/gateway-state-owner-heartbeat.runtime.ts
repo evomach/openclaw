@@ -23,7 +23,14 @@ export function runGatewayStateOwnerHeartbeat(
     const renewedAt = Atomics.load(lastBeat, 0);
     const age = Number(at - renewedAt);
     if (age < 0) {
-      data.events.postMessage(`${rootPath}: heartbeat clock moved backwards`, []);
+      // A backwards wall-clock step (NTP correction after resume) is not custody
+      // loss: the monotonic beat loop kept touching the lock. Only a step beyond
+      // the failure window is treated as a real clock failure; anything smaller
+      // re-baselines like a suspension gap does.
+      if (age <= -data.failureMs) {
+        data.events.postMessage(`${rootPath}: heartbeat clock moved backwards`, []);
+        return 0;
+      }
       return 0;
     }
     return data.failureMs - age;
@@ -57,9 +64,10 @@ export function runGatewayStateOwnerHeartbeat(
     // An OS suspension freezes this thread too, so a wall-clock gap alone cannot
     // mean another owner took custody: same-namespace staleness is pid/starttime
     // based, and foreign-namespace observers are frozen during the sleep as well.
-    // Re-baseline from one fresh verified stamp instead of forfeiting; a clock
-    // that moved backwards still stops below.
-    const recovering = remaining <= 0 && now() - Atomics.load(lastBeat, 0) >= 0n;
+    // A backwards step within the failure window is the same kind of clock
+    // artifact and re-baselines identically; only a step beyond it forfeits.
+    const recovering =
+      remaining <= 0 && now() - Atomics.load(lastBeat, 0) > -BigInt(data.failureMs);
     if (remaining <= 0 && !recovering) {
       stop();
       return;
@@ -92,9 +100,13 @@ export function runGatewayStateOwnerHeartbeat(
           continue;
         }
         const renewalStartedAt = now();
-        // A recovered clock cannot make an older captured timestamp safe to write.
+        // A recovered clock cannot make an older captured timestamp safe to write;
+        // a backwards step within the failure window re-stamps like resume does.
         if (remainingMs(renewalStartedAt) <= 0 || remainingMs() <= 0) {
-          if (!recovering || renewalStartedAt - Atomics.load(lastBeat, 0) < 0n) {
+          if (
+            !recovering ||
+            renewalStartedAt - Atomics.load(lastBeat, 0) <= -BigInt(data.failureMs)
+          ) {
             stop();
             return;
           }

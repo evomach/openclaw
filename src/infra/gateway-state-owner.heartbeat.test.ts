@@ -16,11 +16,16 @@ import {
   acquireStateDatabaseSchemaLease,
   captureGatewayStateOwner,
 } from "./gateway-state-owner.js";
+import { scheduleGatewayRestart } from "./restart.js";
 import * as workerCpu from "./worker-cpu.js";
 
 vi.mock("./gateway-lock-payload.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./gateway-lock-payload.js")>()),
   GATEWAY_OWNER_HEARTBEAT_MS: 1_000,
+}));
+vi.mock("./restart.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./restart.js")>()),
+  scheduleGatewayRestart: vi.fn(),
 }));
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 afterEach(() => {
@@ -285,7 +290,7 @@ it("never backdates custody when clock rollback recovers before a partial failur
   }
 });
 
-it.each(["EIO", "worker exit", "clock rollback"] as const)(
+it.each(["EIO", "clock rollback"] as const)(
   "fences state admission with a visible reason after %s stops renewal",
   async (fault) => {
     const root = tempDirs.make("openclaw-owner-heartbeat-lost-");
@@ -310,21 +315,13 @@ it.each(["EIO", "worker exit", "clock rollback"] as const)(
       if (!worker || !lastBeat) {
         throw new Error("Expected one heartbeat worker and its shared observation");
       }
-      if (fault === "worker exit") {
-        await worker.terminate();
-      }
       expect(() => gateway.assertCurrent()).not.toThrow();
       Atomics.store(
         lastBeat,
         0,
         BigInt(Date.now() + (fault === "clock rollback" ? 60_001 : -60_001)),
       );
-      const reason =
-        fault === "EIO"
-          ? "synthetic EIO"
-          : fault === "clock rollback"
-            ? "heartbeat clock moved backwards"
-            : "utimes heartbeat renewal did not complete within 60 seconds";
+      const reason = fault === "EIO" ? "synthetic EIO" : "heartbeat clock moved backwards";
       expect(() => gateway.assertCurrent()).toThrow(reason);
       expect(owner.signal.aborted).toBe(true);
       expect(owner.signal.reason).toMatchObject({
@@ -344,6 +341,112 @@ it.each(["EIO", "worker exit", "clock rollback"] as const)(
     }
   },
 );
+
+it("resumes custody and respawns the renewal worker after a silent worker exit", async () => {
+  const { workers, ready, beats } = observeHeartbeatWorkers();
+  const root = tempDirs.make("openclaw-owner-heartbeat-respawn-");
+  const gateway = await acquireGatewayLock({
+    allowInTests: true,
+    env: { OPENCLAW_STATE_DIR: root },
+    timeoutMs: 0,
+  });
+  if (!gateway) {
+    throw new Error("Expected Gateway custody");
+  }
+  try {
+    await Promise.all(ready);
+    const lastBeat = beats[0];
+    if (!lastBeat) {
+      throw new Error("Expected one heartbeat worker and its shared observation");
+    }
+    await workers[0].terminate();
+    // Backdate the lock so the synchronous respawn touch stays observable even
+    // when it lands within the same millisecond as the last worker beat.
+    const stale = new Date(Date.now() - 5_000);
+    fs.utimesSync(gateway.lockPath, stale, stale);
+    const stamp = fs.statSync(gateway.lockPath).mtimeMs;
+    Atomics.store(lastBeat, 0, BigInt(Date.now() - 60_001));
+    expect(() => gateway.assertCurrent()).not.toThrow();
+    expect(fs.statSync(gateway.lockPath).mtimeMs).toBeGreaterThan(stamp);
+    expect(workers).toHaveLength(2);
+    const respawnedBeat = beats[1];
+    if (!respawnedBeat) {
+      throw new Error("Expected the respawned worker's shared observation");
+    }
+    await Promise.all(ready);
+    expect(Number(Atomics.load(respawnedBeat, 0))).toBeGreaterThan(Date.now() - 60_000);
+    expect(() => gateway.assertCurrent()).not.toThrow();
+  } finally {
+    await gateway.release();
+    await Promise.all(workers.map((worker) => worker.terminate()));
+  }
+});
+
+it("re-baselines custody after a backwards clock step within the failure window", async () => {
+  const { workers, ready, beats } = observeHeartbeatWorkers();
+  const root = tempDirs.make("openclaw-owner-heartbeat-backstep-");
+  const gateway = await acquireGatewayLock({
+    allowInTests: true,
+    env: { OPENCLAW_STATE_DIR: root },
+    timeoutMs: 0,
+  });
+  if (!gateway) {
+    throw new Error("Expected Gateway custody");
+  }
+  try {
+    await Promise.all(ready);
+    const lastBeat = beats[0];
+    if (!lastBeat) {
+      throw new Error("Expected one heartbeat worker and its shared observation");
+    }
+    // An NTP correction after resume can put the wall clock slightly behind the
+    // last stamp; the verified touch re-baselines instead of forfeiting custody.
+    Atomics.store(lastBeat, 0, BigInt(Date.now() + 30_000));
+    expect(() => gateway.assertCurrent()).not.toThrow();
+    expect(Number(Atomics.load(lastBeat, 0))).toBeLessThanOrEqual(Date.now());
+    expect(workers).toHaveLength(1);
+  } finally {
+    await gateway.release();
+    await Promise.all(workers.map((worker) => worker.terminate()));
+  }
+});
+
+it("schedules a supervisor restart when a run-loop process loses custody", async () => {
+  const { workers, ready, beats } = observeHeartbeatWorkers();
+  const root = tempDirs.make("openclaw-owner-heartbeat-selfrestart-");
+  const gateway = await acquireGatewayLock({
+    allowInTests: true,
+    env: { OPENCLAW_STATE_DIR: root },
+    timeoutMs: 0,
+  });
+  if (!gateway) {
+    throw new Error("Expected Gateway custody");
+  }
+  const listener = () => {};
+  process.on("SIGUSR2", listener);
+  try {
+    await Promise.all(ready);
+    const lastBeat = beats[0];
+    if (!lastBeat) {
+      throw new Error("Expected one heartbeat worker and its shared observation");
+    }
+    await workers[0].terminate();
+    // A successor took the lock, so the synchronous proof fences for real.
+    fs.writeFileSync(gateway.lockPath, "successor-owner");
+    Atomics.store(lastBeat, 0, BigInt(Date.now() - 60_001));
+    expect(() => gateway.assertCurrent()).toThrow("owner lock was removed or replaced");
+    await vi.waitFor(() =>
+      expect(scheduleGatewayRestart).toHaveBeenCalledWith({
+        reason: "state-owner custody lost",
+        skipDeferral: true,
+      }),
+    );
+  } finally {
+    process.off("SIGUSR2", listener);
+    await gateway.release();
+    await Promise.all(workers.map((worker) => worker.terminate()));
+  }
+});
 
 it("re-baselines renewal after a suspension gap instead of forfeiting custody", async () => {
   const rootPath = path.join(tempDirs.make("openclaw-owner-heartbeat-sleep-"), "root.lock");
@@ -379,6 +482,10 @@ it("recovers overdue custody through a bounded beat when the worker is live", as
     if (!lastBeat) {
       throw new Error("Expected one heartbeat worker and its shared observation");
     }
+    // Backdate the lock so the recovery touch stays observable even when the
+    // bounded beat lands within the same millisecond as the acquisition stamp.
+    const stale = new Date(Date.now() - 5_000);
+    fs.utimesSync(gateway.lockPath, stale, stale);
     const stamp = fs.statSync(gateway.lockPath).mtimeMs;
     Atomics.store(lastBeat, 0, BigInt(Date.now() - 60_001));
     expect(() => gateway.assertCurrent()).not.toThrow();

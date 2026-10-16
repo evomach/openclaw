@@ -37,6 +37,7 @@ import {
   isGatewayStateOwnerDefinitelyStale,
   StateDatabaseAdmissionPendingError,
 } from "./gateway-state-owner-record.js";
+import { scheduleStateOwnerCustodyRestart } from "./gateway-state-owner-restart.js";
 import { normalizeSqliteNonNegativeInteger } from "./sqlite-busy-timeout.js";
 import { runWithSqliteCleanup } from "./sqlite-lifecycle-errors.js";
 
@@ -149,8 +150,7 @@ function verifyOwnerLock(owner: ProcessOwner, lock: StateOwnerFile | undefined):
     if (!projection.verifyStillHeld()) {
       return false;
     }
-    owner.heartbeat.worker.postMessage([projection.lockPath, raw], []);
-    owner.heartbeat.paths.add(projection.lockPath);
+    owner.heartbeat.addLock(projection.lockPath, raw);
   }
   owner.verifiedAt = performance.now();
   return true;
@@ -168,6 +168,9 @@ function loseOwner(owner: ProcessOwner, error: Error) {
   owner.heartbeat?.stop();
   log.error(error.message);
   owner.lost.abort(error);
+  // Lost custody fences every later state operation; recover through the
+  // supervisor instead of limping as a zombie (see scheduleStateOwnerCustodyRestart).
+  scheduleStateOwnerCustodyRestart();
 }
 
 // Only explicit reads reuse proof for one second; overdue dispatch verifies
@@ -579,8 +582,7 @@ export function acquireStateDatabaseSchemaLease(
     ));
     const raw = fs.readFileSync(projection.lockPath, "utf8");
     lease.assertCurrent();
-    heartbeat.worker.postMessage([projection.lockPath, raw], []);
-    heartbeat.paths.add(projection.lockPath);
+    heartbeat.addLock(projection.lockPath, raw);
     return lease;
   } catch (error) {
     return runWithSqliteCleanup(lease, "state schema ownership verification", () => {
