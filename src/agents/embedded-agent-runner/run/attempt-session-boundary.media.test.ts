@@ -116,10 +116,7 @@ describe("native video at the session conversion boundary", () => {
       });
       expect(videoBlocks(provider.messages[2])).toEqual([]);
       if (messages.length === 4) {
-        expect(provider.messages[3]?.content).toContainEqual({
-          type: "text",
-          text: expect.stringContaining("Queued text without an attachment"),
-        });
+        expect(provider.messages[3]?.content).toContain("Queued text without an attachment");
         expect(videoBlocks(provider.messages[3])).toEqual([]);
       }
     }
