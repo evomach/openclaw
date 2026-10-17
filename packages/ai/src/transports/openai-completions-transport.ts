@@ -333,7 +333,7 @@ export function streamOpenAICompletionsRequest(
           ? {
               client: createDirectCompletionsClient(
                 model,
-                context,
+                requestContext,
                 apiKey,
                 options,
                 cacheRetention === "none" ? undefined : options?.sessionId,
@@ -341,7 +341,7 @@ export function streamOpenAICompletionsRequest(
               ),
               sawStreamDONE: undefined,
             }
-          : createManagedCompletionsClient(model, context, options, apiKey, cacheRetention);
+          : createManagedCompletionsClient(model, requestContext, options, apiKey, cacheRetention);
       const builtParams = buildOpenAICompletionsRequest(model, requestContext, options, policy);
       let params = builtParams;
       const encodeBody = prepareModelRequestBody(options);

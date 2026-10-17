@@ -103,7 +103,11 @@ function resolveOpenAICompletionsMaxTokens(
 
 const OPENAI_COMPLETIONS_INPUT_TOKEN_SAFETY_MARGIN = 1.25;
 const OPENAI_COMPLETIONS_IMAGE_CHAR_ESTIMATE = 8_000;
-// Video is projected into frames by vision servers; base64 size is not a token count.
+// Vision servers bill video clips as projected frames (roughly 4k-25k tokens on
+// local llama.cpp-style endpoints), never as the base64 characters of the
+// data URI. Counting raw data-URI characters inflates any clip above a few
+// hundred kilobytes to hundreds of thousands of estimated tokens and trips the
+// proxy-like preflight guard before the request is even sent.
 const OPENAI_COMPLETIONS_VIDEO_CHAR_ESTIMATE = 96_000;
 const MIN_USEFUL_OUTPUT_TOKENS = 16;
 

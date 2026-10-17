@@ -147,6 +147,10 @@ export type EmbeddedRunAttemptParams = EmbeddedRunAttemptBase & {
   /** Transport hooks follow the current endpoint without changing admitted request policy. */
   transportConfig?: RunEmbeddedAgentParams["config"];
   modelCallSequence?: { value: number };
+  /** Canonical media facts from the active user turn's persisted message; used to
+   * re-inject facts when the session layer rebuilds the provider transcript copy
+   * without any fact carrier. */
+  currentTurnMediaFacts?: import("../../../media/media-facts.js").MediaFact[];
   /** Recomputed by the host for this attempt; never inherited from the requesting turn. */
   githubPublicationAvailable?: boolean;
   disableToolSearch?: true;

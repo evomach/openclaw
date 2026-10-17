@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import type { ModelInputContent } from "@openclaw/ai/provider-types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSolidPngBuffer } from "../../../../test/helpers/image-fixtures.js";
 import { useAutoCleanupTempDirTracker } from "../../../../test/helpers/temp-dir.js";
@@ -431,6 +432,207 @@ describe("structured prompt media replay", () => {
       ]);
     } finally {
       await fs.rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("native video provider materialization from persisted facts", () => {
+  it("materializes a video fact held only in non-canonical top-level media fields", async () => {
+    const stateDir = tempDirs.make("openclaw-video-unprojected-");
+    const inboundDir = path.join(stateDir, "media", "inbound");
+    await fs.mkdir(inboundDir, { recursive: true });
+    const videoBuffer = Buffer.from(
+      "0000001c6674797069736f6d0000000069736f6d0000020000006d6f6f7600000000",
+      "hex",
+    );
+    const videoPath = path.join(inboundDir, "IMG_UNPROJECTED.mp4");
+    await fs.writeFile(videoPath, videoBuffer);
+    const envSnapshot = captureEnv(["OPENCLAW_STATE_DIR"]);
+    setTestEnvValue("OPENCLAW_STATE_DIR", stateDir);
+    try {
+      // A freshly drained/queued runtime turn may carry facts only as the
+      // envelope-shaped top-level media array; transcript append has not
+      // canonicalized it into __openclaw yet.
+      const userMessage = {
+        role: "user",
+        content: [{ type: "text", text: "drained video turn" }],
+        timestamp: 1,
+        media: [
+          {
+            path: videoPath,
+            contentType: "video/mp4",
+            kind: "video",
+            fileName: "IMG_UNPROJECTED.MP4",
+            workspaceDir: stateDir,
+          },
+        ],
+      } as unknown as AgentMessage;
+      const prepared = await materializeProviderContext({
+        context: {
+          messages: [userMessage],
+        } as unknown as Parameters<typeof materializeProviderContext>[0]["context"],
+        workspaceDir: stateDir,
+      });
+      const blocks = prepared.messages.flatMap((message) =>
+        Array.isArray(message.content) ? (message.content as ModelInputContent[]) : [],
+      );
+      expect(blocks.filter((block) => block.type === "video")).toHaveLength(1);
+    } finally {
+      envSnapshot.restore();
+    }
+  });
+
+  it("re-injects a video block after history hydration baked the omission marker", async () => {
+    const stateDir = tempDirs.make("openclaw-video-replay-");
+    const inboundDir = path.join(stateDir, "media", "inbound");
+    await fs.mkdir(inboundDir, { recursive: true });
+    const videoBuffer = Buffer.from(
+      "0000001c6674797069736f6d0000000069736f6d0000020000006d6f6f7600000000",
+      "hex",
+    );
+    await fs.writeFile(path.join(inboundDir, "IMG_TEST.mp4"), videoBuffer);
+    const envSnapshot = captureEnv(["OPENCLAW_STATE_DIR"]);
+    setTestEnvValue("OPENCLAW_STATE_DIR", stateDir);
+    try {
+      const userMessage = {
+        role: "user",
+        content: [{ type: "text", text: "Sent video test again" }],
+        timestamp: 1,
+      } as unknown as AgentMessage;
+      Reflect.set(userMessage, "__openclaw", {
+        media: [
+          {
+            url: "media://inbound/IMG_TEST.mp4",
+            contentType: "video/mp4",
+            kind: "video",
+            fileName: "IMG_TEST.MP4",
+            workspaceDir: stateDir,
+          },
+        ],
+      });
+      // The history/context transform hydrates without the provider flag first,
+      // so the model-facing copy carries the baked omission marker.
+      const hydrated = await hydratePromptMediaMessages([userMessage], {
+        workspaceDir: stateDir,
+        model: { input: ["text", "image", "video"] },
+      });
+      const baked = JSON.stringify((hydrated[0] as unknown as { content?: unknown }).content ?? "");
+      expect(baked).toContain("video omitted");
+      // The provider handoff must strip the marker and re-inject the real video.
+      const prepared = await materializeProviderContext({
+        context: {
+          messages: hydrated,
+        } as unknown as Parameters<typeof materializeProviderContext>[0]["context"],
+        workspaceDir: stateDir,
+      });
+      const blocks = prepared.messages.flatMap((message) =>
+        Array.isArray(message.content) ? (message.content as ModelInputContent[]) : [],
+      );
+      expect(blocks.filter((block) => block.type === "video")).toHaveLength(1);
+      expect(
+        blocks.some(
+          (block) =>
+            block.type === "text" &&
+            typeof (block as { text?: unknown }).text === "string" &&
+            (block as { text: string }).text.includes("video omitted"),
+        ),
+      ).toBe(false);
+    } finally {
+      envSnapshot.restore();
+    }
+  });
+
+  it("re-injects current-turn facts when the provider copy lost every fact carrier", async () => {
+    const stateDir = tempDirs.make("openclaw-video-inject-");
+    const inboundDir = path.join(stateDir, "media", "inbound");
+    await fs.mkdir(inboundDir, { recursive: true });
+    const videoBuffer = Buffer.from(
+      "0000001c6674797069736f6d0000000069736f6d0000020000006d6f6f7600000000",
+      "hex",
+    );
+    await fs.writeFile(path.join(inboundDir, "IMG_INJECT.mp4"), videoBuffer);
+    const envSnapshot = captureEnv(["OPENCLAW_STATE_DIR"]);
+    setTestEnvValue("OPENCLAW_STATE_DIR", stateDir);
+    try {
+      // Session-layer rebuild of the active user turn: baked marker text only,
+      // no runtime symbols, no __openclaw, no legacy fields (census round shape).
+      const userMessage = {
+        role: "user",
+        content: [{ type: "text", text: "watch this (video omitted: source unavailable)" }],
+        timestamp: 1,
+      } as unknown as AgentMessage;
+      const prepared = await materializeProviderContext({
+        context: {
+          messages: [userMessage],
+        } as unknown as Parameters<typeof materializeProviderContext>[0]["context"],
+        workspaceDir: stateDir,
+        currentTurnFacts: [
+          {
+            url: "media://inbound/IMG_INJECT.mp4",
+            contentType: "video/mp4",
+            kind: "video",
+            fileName: "IMG_INJECT.MP4",
+            workspaceDir: stateDir,
+          },
+        ] as never,
+      });
+      const blocks = prepared.messages.flatMap((message) =>
+        Array.isArray(message.content) ? (message.content as ModelInputContent[]) : [],
+      );
+      expect(blocks.filter((block) => block.type === "video")).toHaveLength(1);
+    } finally {
+      envSnapshot.restore();
+    }
+  });
+
+  it("targets the real user message for injection when a runtime-context wrapper follows it", async () => {
+    const stateDir = tempDirs.make("openclaw-video-wrapper-");
+    const inboundDir = path.join(stateDir, "media", "inbound");
+    await fs.mkdir(inboundDir, { recursive: true });
+    const videoBuffer = Buffer.from(
+      "0000001c6674797069736f6d0000000069736f6d0000020000006d6f6f7600000000",
+      "hex",
+    );
+    await fs.writeFile(path.join(inboundDir, "IMG_WRAP.mp4"), videoBuffer);
+    const envSnapshot = captureEnv(["OPENCLAW_STATE_DIR"]);
+    setTestEnvValue("OPENCLAW_STATE_DIR", stateDir);
+    try {
+      const userMessage = {
+        role: "user",
+        content: [{ type: "text", text: "held video turn" }],
+        timestamp: 1,
+      } as unknown as AgentMessage;
+      const wrapper = {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>\ndata\n<<<END_OPENCLAW_INTERNAL_CONTEXT>>>",
+          },
+        ],
+        timestamp: 2,
+      } as unknown as AgentMessage;
+      const prepared = await materializeProviderContext({
+        context: {
+          messages: [userMessage, wrapper],
+        } as unknown as Parameters<typeof materializeProviderContext>[0]["context"],
+        workspaceDir: stateDir,
+        currentTurnFacts: [
+          {
+            url: "media://inbound/IMG_WRAP.mp4",
+            contentType: "video/mp4",
+            kind: "video",
+            fileName: "IMG_WRAP.MP4",
+            workspaceDir: stateDir,
+          },
+        ] as never,
+      });
+      const blocks = prepared.messages.flatMap((message) =>
+        Array.isArray(message.content) ? (message.content as ModelInputContent[]) : [],
+      );
+      expect(blocks.filter((block) => block.type === "video")).toHaveLength(1);
+    } finally {
+      envSnapshot.restore();
     }
   });
 });

@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  attachRuntimePromptMediaFacts,
   canonicalizePersistedUserMessageMedia,
   isImageMediaFact,
   isVideoMediaFact,
   normalizeMediaFacts,
   PERSISTED_LEGACY_MEDIA_KEYS,
   readPersistedMediaFacts,
+  readRuntimePromptMediaFacts,
+  readRuntimePromptTurnTag,
+  tagRuntimePromptTurn,
 } from "./media-facts.js";
 
 const canonicalFact = { path: "/media/canonical.png", contentType: "image/png" };
@@ -387,5 +391,27 @@ describe("canonical image media facts", () => {
 
     expect(media?.map(isImageMediaFact)).toEqual([false, true, true]);
     expect(media?.[1]?.kind).toBeUndefined();
+  });
+});
+
+describe("runtime prompt symbol attachment on frozen copies", () => {
+  it("skips tagging and fact attachment instead of throwing", () => {
+    const frozen = Object.freeze({ role: "user", content: "hydrated transcript copy" });
+    expect(() => tagRuntimePromptTurn(frozen, "persist:run-1")).not.toThrow();
+    expect(readRuntimePromptTurnTag(frozen)).toBeUndefined();
+    expect(() =>
+      attachRuntimePromptMediaFacts(frozen, [
+        { path: "/media/clip.mp4", contentType: "video/mp4" },
+      ]),
+    ).not.toThrow();
+    expect(readRuntimePromptMediaFacts(frozen)).toBeUndefined();
+  });
+
+  it("still tags and attaches on extensible copies", () => {
+    const message = { role: "user", content: "runtime copy" };
+    tagRuntimePromptTurn(message, "persist:run-2");
+    attachRuntimePromptMediaFacts(message, [{ path: "/media/clip.mp4", contentType: "video/mp4" }]);
+    expect(readRuntimePromptTurnTag(message)).toBe("persist:run-2");
+    expect(readRuntimePromptMediaFacts(message)?.[0]?.path).toBe("/media/clip.mp4");
   });
 });

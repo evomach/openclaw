@@ -42,6 +42,27 @@ export type MediaFactInput = {
 };
 
 const RUNTIME_PROMPT_MEDIA_FACTS = Symbol.for("openclaw.runtimePromptMediaFacts");
+const RUNTIME_PROMPT_TURN_TAG = Symbol.for("openclaw.runtimePromptTurnTag");
+
+/** Debug-only identity token so probes can tell whether two passes share a message object. */
+export function tagRuntimePromptTurn<T extends object>(message: T, tag: string): T {
+  // Transcript hydration deep-freezes parsed message objects (transcript-json), so a
+  // runtime copy can arrive non-extensible. Debug tagging must never crash the turn.
+  if (!Object.isExtensible(message)) {
+    return message;
+  }
+  Object.defineProperty(message, RUNTIME_PROMPT_TURN_TAG, {
+    configurable: true,
+    value: tag,
+  });
+  return message;
+}
+
+export function readRuntimePromptTurnTag(message: object): string | undefined {
+  // SAFETY: runtime prompt messages carry the tag as a non-enumerable symbol-keyed property.
+  const tag = (message as Record<PropertyKey, unknown>)[RUNTIME_PROMPT_TURN_TAG];
+  return typeof tag === "string" ? tag : undefined;
+}
 
 /** Attaches facts to a runtime prompt message without changing serialized/model-visible bytes. */
 export function attachRuntimePromptMediaFacts<T extends object>(
@@ -49,6 +70,11 @@ export function attachRuntimePromptMediaFacts<T extends object>(
   media: readonly MediaFact[],
   imageOrder?: readonly PromptImageOrderEntry[],
 ): T {
+  // Same frozen-hydration constraint as tagRuntimePromptTurn: a non-extensible copy
+  // cannot carry the facts, and throwing here would fail the transcript append itself.
+  if (!Object.isExtensible(message)) {
+    return message;
+  }
   const normalized = normalizeMediaFacts(media);
   if (imageOrder?.length) {
     Object.defineProperty(normalized, "imageOrder", { value: [...imageOrder] });
