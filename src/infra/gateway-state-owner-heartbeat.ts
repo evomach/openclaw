@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { MessageChannel, receiveMessageOnPort, type Worker } from "node:worker_threads";
 import { coerceErrorMessage } from "@openclaw/normalization-core/error-coercion";
+import { requestCliParentTermination } from "../../cli-parent-lifetime.mjs";
 import { runInDetachedAsyncContext } from "../shared/detached-async-context.js";
 import { GATEWAY_OWNER_HEARTBEAT_MS } from "./gateway-lock-payload.js";
 import {
@@ -90,6 +91,12 @@ export function startGatewayStateOwnerHeartbeat(
       let message;
       while ((message = receiveMessageOnPort(port1))) {
         recordWorkerMessage("lifecycle", "from_worker");
+        if (message.message === "parent-lost") {
+          // The worker proved the maintenance parent is gone; terminate so the
+          // supervisor restarts instead of resuming an unsettled process.
+          requestCliParentTermination();
+          continue;
+        }
         if (typeof message.message === "string") {
           custodyEvent = message.message;
         }
