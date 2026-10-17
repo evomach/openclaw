@@ -16,7 +16,7 @@ import {
 import { providerSupportsCapability } from "../../packages/media-understanding-common/src/provider-supports.js";
 import { isMinimaxVlmModel, isMinimaxVlmProvider } from "../agents/minimax-vlm.js";
 import { isProviderAuthError } from "../agents/model-auth-runtime-shared.js";
-import { splitTrailingAuthProfile } from "../agents/model-ref-profile.js";
+import { configuredModelSupportsNativeVideo } from "../agents/model-input.js";
 import {
   buildModelAliasIndex,
   inferUniqueProviderFromConfiguredModels,
@@ -341,33 +341,13 @@ async function activeModelSupportsNativeVision(
   return modelSupportsVision(entry);
 }
 
-function configuredActiveModelSupportsNativeVideo(
-  params: Omit<AutoModelSelectionParams, "capability" | "providerRegistry">,
-): boolean {
-  const activeProvider = params.activeModel?.provider?.trim();
-  const activeModel = params.activeModel?.model?.trim();
-  if (!activeProvider || !activeModel) {
-    return false;
-  }
-  const providerCfg = findNormalizedProviderValue(params.cfg.models?.providers, activeProvider);
-  if (!providerCfg) {
-    return false;
-  }
-  const modelId = splitTrailingAuthProfile(activeModel).model;
-  const modelCfg = providerCfg.models?.find((candidate) => candidate.id === modelId);
-  if (!modelCfg) {
-    return false;
-  }
-  const api = modelCfg.api ?? providerCfg.api;
-  return api === "openai-completions" && (modelCfg.input?.includes("video") ?? false);
-}
-
 // Mirrors the openai-completions transport contract that actually forwards a
 // video block (packages/ai/src/provider-transcript-transform.ts): only that api
 // carries video for a model declaring video input. Native-video providers that
 // own their own transport (google/qwen/moonshot) register describeVideo and are
 // resolved through the normal path, so gating on this exact api keeps the skip
-// from claiming a handoff the transport would omit.
+// from claiming a handoff the transport would omit. Authored config may omit
+// the api, so the active model's resolved api is authoritative when present.
 async function activeModelSupportsNativeVideo(
   params: Omit<AutoModelSelectionParams, "capability" | "providerRegistry">,
 ): Promise<boolean> {
@@ -375,7 +355,14 @@ async function activeModelSupportsNativeVideo(
   if (!activeProvider) {
     return false;
   }
-  if (configuredActiveModelSupportsNativeVideo(params)) {
+  if (
+    configuredModelSupportsNativeVideo({
+      cfg: params.cfg,
+      provider: activeProvider,
+      modelId: params.activeModel?.model ?? "",
+      api: params.activeModel?.api,
+    })
+  ) {
     return true;
   }
   try {
