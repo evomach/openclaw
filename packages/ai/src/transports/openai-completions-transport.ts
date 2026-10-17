@@ -315,7 +315,8 @@ export function streamOpenAICompletionsRequest(
     let discardCandidate = false;
     let firstEventAbort: ReturnType<typeof createFirstStreamEventAbortController> | undefined;
     try {
-      const requestContext = await resolveProviderContext(context, options);
+      // SAFETY: the resolver preserves the Context shape and only widens declared input modalities.
+      const requestContext = (await resolveProviderContext(context, options)) as Context;
       const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
       const directEmitReasoning = Boolean(
         mode === "direct" &&

@@ -13,6 +13,7 @@ import {
   isImageMediaFact,
   isVideoMediaFact,
   normalizeMediaFacts,
+  readRuntimePromptImageOrder,
   readRuntimePromptMediaFacts,
   readPersistedMediaFacts,
   type MediaFact,

@@ -120,6 +120,9 @@ it.each([false, true])("keeps custody across worker clock origins (legacy=%s)", 
 
 it("keeps the selected heartbeat generation alive through native retirement", async () => {
   const root = tempDirs.make("openclaw-owner-generation-");
+  // The retained stub uses top-level await; outside the repo root the nearest
+  // package.json must declare ESM or the transform falls back to cjs.
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ type: "module" }));
   const lockPath = path.join(root, "root.lock");
   fs.writeFileSync(lockPath, "root-owner");
   const { workers, ready } = observeHeartbeatWorkers();

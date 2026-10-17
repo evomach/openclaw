@@ -21,7 +21,6 @@ import { configuredModelSupportsNativeVideo } from "../../model-input.js";
 import { wrapStreamFnTextTransforms } from "../../plugin-text-transforms.js";
 import { registerProviderStreamForModel } from "../../provider-stream.js";
 import { resolveModelCallUrgency } from "../../run-trigger.js";
-import type { StreamFn } from "../../runtime/index.js";
 import type { SandboxContext } from "../../sandbox/types.js";
 import type { AgentSession, SessionManager, SettingsManager } from "../../sessions/index.js";
 import { withSessionManagerAppend } from "../../sessions/session-manager-append-admission.js";

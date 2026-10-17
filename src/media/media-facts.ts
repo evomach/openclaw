@@ -277,6 +277,15 @@ export function canonicalizePersistedUserMessageMedia<T extends object>(
   };
 }
 
+export function readRuntimePromptImageOrder(message: object): PromptImageOrderEntry[] | undefined {
+  const imageOrder = (
+    readRuntimePromptMediaFacts(message) as
+      | (MediaFact[] & { imageOrder?: PromptImageOrderEntry[] })
+      | undefined
+  )?.imageOrder;
+  return Array.isArray(imageOrder) ? (imageOrder as PromptImageOrderEntry[]) : undefined;
+}
+
 export function stripLegacyMediaContextFields(ctx: Record<string, unknown>): void {
   for (const key of LEGACY_MEDIA_CONTEXT_KEYS) {
     delete ctx[key];
